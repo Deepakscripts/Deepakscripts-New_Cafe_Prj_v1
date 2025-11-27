@@ -1,7 +1,8 @@
+// frontend/src/pages/PlaceOrder/PlaceOrder.jsx
 import React, { useContext, useEffect, useMemo, useState } from "react";
 import "./PlaceOrder.css";
 import { StoreContext } from "../../Context/StoreContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import axios from "axios";
 
@@ -11,17 +12,24 @@ const PlaceOrder = () => {
     getAddOnTotal,
     getGrandTotal,
     buildClientCartSnapshot,
-    setCheeseAddOns,
+    clearCart,
     token,
     url,
-    setCartItems,
-    setToken,
     currency,
+    sessionId,
+    ensureSessionId,
   } = useContext(StoreContext);
 
   const navigate = useNavigate();
+  const location = useLocation();
 
-  // Dine-in customer info only
+  // detect whether this page was opened as ?adhoc=1
+  const params = new URLSearchParams(location.search);
+  const isAdhoc = params.get("adhoc") === "1";
+
+  // ------------------------------
+  // Customer Data (only needed for FINAL order)
+  // ------------------------------
   const [data, setData] = useState({
     firstName: "",
     lastName: "",
@@ -34,15 +42,25 @@ const PlaceOrder = () => {
     setData((prev) => ({ ...prev, [name]: value }));
   };
 
-  // Snapshot of items to send, INCLUDING add-ons
-  const clientCart = useMemo(() => buildClientCartSnapshot(), [buildClientCartSnapshot]);
+  // ------------------------------
+  // Cart Snapshots and Totals
+  // ------------------------------
+  const clientCart = useMemo(
+    () => buildClientCartSnapshot(),
+    [buildClientCartSnapshot]
+  );
 
   const cartSubtotal = useMemo(() => getTotalCartAmount(), [getTotalCartAmount]);
   const cheeseTotal = useMemo(() => getAddOnTotal(), [getAddOnTotal]);
   const grandTotal = useMemo(() => getGrandTotal(), [getGrandTotal]);
 
+  // ------------------------------
+  // PLACE ORDER HANDLER
+  // ------------------------------
   const placeOrder = async (e) => {
     e.preventDefault();
+
+    ensureSessionId(); // ensure grouping id exists
 
     if (!token) {
       toast.error("Please sign in to place an order");
@@ -50,105 +68,132 @@ const PlaceOrder = () => {
       return;
     }
 
-    if (!data.firstName.trim() || !data.lastName.trim() || !data.tableNumber) {
-      toast.error("First name, last name and table number are required");
-      return;
-    }
-
-    // require at least one real menu item (add-ons alone should not be orderable)
     if (cartSubtotal <= 0) {
       toast.error("Your cart is empty");
       return;
     }
 
+    if (!data.tableNumber) {
+      toast.error("Please select table number");
+      return;
+    }
+
+    // FINAL ORDER requires name + last name
+    if (!isAdhoc) {
+      if (!data.firstName.trim() || !data.lastName.trim()) {
+        toast.error("First name & last name are required");
+        return;
+      }
+    }
+
     try {
+      // use backend fields
       const payload = {
         firstName: data.firstName.trim(),
         lastName: data.lastName.trim(),
         email: (data.email || "").trim(),
         tableNumber: Number(data.tableNumber),
-
-        // the whole line-item list, including add-ons
-        clientCart,
-
-        // optional metadata the backend can use or ignore
-        meta: {
-          cheeseTotal,
-          grandTotal,
-          currency,
-        },
+        items: clientCart,
+        sessionId,
+        notes: "",
       };
 
-      const response = await axios.post(`${url}/api/order/placecod`, payload, {
+      let endpoint = "";
+      if (isAdhoc) {
+        endpoint = "/api/order/placeadhoc";
+      } else {
+        endpoint = "/api/order/placecod";
+        payload.paymentMethod = "POC";
+      }
+
+      const response = await axios.post(url + endpoint, payload, {
         headers: { token },
         validateStatus: () => true,
       });
 
+      // token expired case
       if (response.status === 401) {
         localStorage.removeItem("token");
-        setToken("");
-        toast.error(response.data?.message || "Session expired. Sign in again.");
+        toast.error("Session expired. Please login again.");
         navigate("/cart");
         return;
       }
 
       if (response.data?.success) {
-        toast.success(response.data.message || "Order placed");
-        setCartItems({});
-        setCheeseAddOns({ pasta: 0, moburg: 0 }); // reset add-ons after successful order
-        navigate("/myorders");
+        // reset cart & addons
+        await clearCart();
+
+        if (isAdhoc) {
+          toast.success("Adhoc order placed successfully!");
+          navigate("/myorders");
+        } else {
+          toast.success("Final order placed! Please pay on counter.");
+          navigate("/myorders");
+        }
       } else {
         toast.error(response.data?.message || "Something went wrong");
       }
     } catch (err) {
       console.error(err);
-      toast.error("Failed to place order");
+      toast.error("Error placing order");
     }
   };
 
+  // ------------------------------
+  // Redirect if cart empty or not logged in
+  // ------------------------------
   useEffect(() => {
     if (!token) {
       toast.error("Please sign in to place an order");
       navigate("/cart");
-    } else if (getTotalCartAmount() === 0) {
-      // allow page if there are add-ons, but still need at least one base item
+      return;
+    }
+    if (cartSubtotal <= 0) {
       navigate("/cart");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, cartSubtotal, navigate]);
 
   return (
     <form onSubmit={placeOrder} className="place-order">
+      {/* LEFT SIDE */}
       <div className="place-order-left">
-        <p className="title">Customer Info</p>
+        <p className="title">
+          {isAdhoc ? "Adhoc Order (Quick Order)" : "Customer Info"}
+        </p>
 
-        <div className="multi-field">
-          <input
-            type="text"
-            name="firstName"
-            onChange={onChangeHandler}
-            value={data.firstName}
-            placeholder="First name"
-            required
-          />
-          <input
-            type="text"
-            name="lastName"
-            onChange={onChangeHandler}
-            value={data.lastName}
-            placeholder="Last name"
-            required
-          />
-        </div>
+        {/* FINAL ORDER → Ask for name & email */}
+        {!isAdhoc && (
+          <>
+            <div className="multi-field">
+              <input
+                type="text"
+                name="firstName"
+                onChange={onChangeHandler}
+                value={data.firstName}
+                placeholder="First name"
+                required={!isAdhoc}
+              />
+              <input
+                type="text"
+                name="lastName"
+                onChange={onChangeHandler}
+                value={data.lastName}
+                placeholder="Last name"
+                required={!isAdhoc}
+              />
+            </div>
 
-        <input
-          type="email"
-          name="email"
-          onChange={onChangeHandler}
-          value={data.email}
-          placeholder="Email address (optional)"
-        />
+            <input
+              type="email"
+              name="email"
+              onChange={onChangeHandler}
+              value={data.email}
+              placeholder="Email address (optional)"
+            />
+          </>
+        )}
 
+        {/* TABLE NUMBER (required always) */}
         <div className="multi-field">
           <select
             name="tableNumber"
@@ -168,9 +213,11 @@ const PlaceOrder = () => {
         </div>
       </div>
 
+      {/* RIGHT SIDE */}
       <div className="place-order-right">
         <div className="cart-total">
           <h2>Cart Totals</h2>
+
           <div>
             <div className="cart-total-details">
               <p>Subtotal</p>
@@ -204,18 +251,17 @@ const PlaceOrder = () => {
           </div>
         </div>
 
+        {/* Payment always Pay on Counter */}
         <div className="payment">
           <h2>Payment Method</h2>
           <div className="payment-option active">
-            <span className="dot" aria-hidden>
-              ●
-            </span>
+            <span className="dot">●</span>
             <p>POC (Pay On Counter)</p>
           </div>
         </div>
 
         <button className="place-order-submit" type="submit">
-          Place Order
+          {isAdhoc ? "Place Adhoc Order" : "Place Final Order"}
         </button>
       </div>
     </form>

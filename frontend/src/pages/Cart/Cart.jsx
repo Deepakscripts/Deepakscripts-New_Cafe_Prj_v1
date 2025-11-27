@@ -1,7 +1,8 @@
-import React, { useContext, useMemo } from 'react';
-import './Cart.css';
-import { StoreContext } from '../../Context/StoreContext';
-import { useNavigate } from 'react-router-dom';
+// frontend/src/pages/Cart/Cart.jsx
+import React, { useContext, useMemo } from "react";
+import "./Cart.css";
+import { StoreContext } from "../../Context/StoreContext";
+import { useNavigate } from "react-router-dom";
 
 const CHEESE_PRICE = 20;
 
@@ -21,29 +22,44 @@ const Cart = () => {
 
   const navigate = useNavigate();
 
-  // items with qty > 0
-  const cartData = useMemo(
-    () => food_list.filter((item) => cartItems[item._id] > 0),
-    [food_list, cartItems]
-  );
+  // items with qty > 0 — robust id handling
+  const cartData = useMemo(() => {
+    if (!Array.isArray(food_list) || !cartItems) return [];
+    return food_list.filter((item) => {
+      const id = String(item._id ?? item.id ?? "");
+      return Number(cartItems[id] || 0) > 0;
+    });
+  }, [food_list, cartItems]);
 
-  // robust category getter
+  // robust category getter (keeps your previous logic)
   const getCategory = (item) => {
-    const raw = item.category || item.categoryName || item.menu_category || item.menu_name || '';
+    const raw =
+      item.category ||
+      item.categoryName ||
+      item.menu_category ||
+      item.menu_name ||
+      "";
     return String(raw).toLowerCase();
   };
 
   // count total qty in a category
   const categoryQty = (needle) =>
     cartData.reduce((sum, item) => {
-      const qty = cartItems[item._id] || 0;
+      const id = String(item._id ?? item.id ?? "");
+      const qty = Number(cartItems[id] || 0);
       return getCategory(item).includes(needle) ? sum + qty : sum;
     }, 0);
 
-  const pastaMax = categoryQty('pasta');
-  const moburgMax = categoryQty('moburg');
+  const pastaMax = categoryQty("pasta");
+  const moburgMax = categoryQty("moburg");
 
   const addOnTotal = getAddOnTotal();
+
+  const subtotal = getTotalCartAmount();
+  const total =
+    subtotal === 0 ? 0 : subtotal + (deliveryCharge || 0) + (addOnTotal || 0);
+
+  const isCartEmpty = subtotal === 0;
 
   return (
     <div className="cart">
@@ -56,13 +72,22 @@ const Cart = () => {
           <p>Total</p>
           <p>Remove</p>
         </div>
+
         <br />
         <hr />
 
+        {cartData.length === 0 && (
+          <div style={{ padding: "2rem 0", textAlign: "center", color: "#666" }}>
+            Your cart is empty.
+          </div>
+        )}
+
         {cartData.map((item, index) => {
-          const qty = cartItems[item._id] || 0;
+          const id = String(item._id ?? item.id ?? "");
+          const qty = Number(cartItems[id] || 0);
+
           return (
-            <div key={item._id}>
+            <div key={id}>
               <div className="cart-items-title cart-items-item">
                 {/* Serial number only */}
                 <p className="cart-serial">{index + 1}.</p>
@@ -89,21 +114,24 @@ const Cart = () => {
                 <div className="cart-qty-controls">
                   <button
                     className="cart-qty-btn"
-                    onClick={() => removeFromCart(item._id)}
+                    onClick={() => removeFromCart(id)}
                     aria-label={`Remove one ${item.name}`}
+                    type="button"
                   >
                     −
                   </button>
                   <span className="cart-qty-count">{qty}</span>
                   <button
                     className="cart-qty-btn"
-                    onClick={() => addToCart(item._id)}
+                    onClick={() => addToCart(id)}
                     aria-label={`Add one ${item.name}`}
+                    type="button"
                   >
                     +
                   </button>
                 </div>
               </div>
+
               <hr />
             </div>
           );
@@ -118,7 +146,7 @@ const Cart = () => {
               <p>Subtotal</p>
               <p>
                 {currency}
-                {getTotalCartAmount()}
+                {subtotal}
               </p>
             </div>
 
@@ -144,21 +172,41 @@ const Cart = () => {
               <p>Delivery Fee</p>
               <p>
                 {currency}
-                {getTotalCartAmount() === 0 ? 0 : deliveryCharge}
+                {subtotal === 0 ? 0 : deliveryCharge}
               </p>
             </div>
+
             <hr />
             <div className="cart-total-details">
               <b>Total</b>
               <b>
                 {currency}
-                {getTotalCartAmount() === 0
-                  ? 0
-                  : getTotalCartAmount() + deliveryCharge + addOnTotal}
+                {total}
               </b>
             </div>
           </div>
-          <button onClick={() => navigate('/order')}>PROCEED TO CHECKOUT</button>
+
+          <div className="cart-actions">
+            {/* ORDER NOW: adhoc quick order (customer may order again later) */}
+            <button
+              className="btn btn-adhoc"
+              onClick={() => navigate("/order?adhoc=1")}
+              disabled={isCartEmpty}
+              type="button"
+            >
+              ORDER NOW (Adhoc)
+            </button>
+
+            {/* Proceed to final checkout */}
+            <button
+              className="btn btn-checkout"
+              onClick={() => navigate("/order")}
+              disabled={isCartEmpty}
+              type="button"
+            >
+              PROCEED TO CHECKOUT
+            </button>
+          </div>
         </div>
 
         <div className="cart-promocode">
@@ -166,7 +214,7 @@ const Cart = () => {
             <p>If you have a promo code, Enter it here</p>
             <div className="cart-promocode-input">
               <input type="text" placeholder="promo code" />
-              <button>Submit</button>
+              <button type="button">Submit</button>
             </div>
 
             {(pastaMax > 0 || moburgMax > 0) && (
@@ -190,6 +238,7 @@ const Cart = () => {
                         }
                         disabled={cheeseAddOns.pasta <= 0}
                         aria-label="Remove cheese for Pasta"
+                        type="button"
                       >
                         −
                       </button>
@@ -203,6 +252,7 @@ const Cart = () => {
                         }
                         disabled={cheeseAddOns.pasta >= pastaMax}
                         aria-label="Add cheese for Pasta"
+                        type="button"
                       >
                         +
                       </button>
@@ -227,6 +277,7 @@ const Cart = () => {
                         }
                         disabled={cheeseAddOns.moburg <= 0}
                         aria-label="Remove cheese for Moburg"
+                        type="button"
                       >
                         −
                       </button>
@@ -240,6 +291,7 @@ const Cart = () => {
                         }
                         disabled={cheeseAddOns.moburg >= moburgMax}
                         aria-label="Add cheese for Moburg"
+                        type="button"
                       >
                         +
                       </button>

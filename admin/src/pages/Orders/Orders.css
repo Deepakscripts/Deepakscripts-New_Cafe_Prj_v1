@@ -4,7 +4,9 @@
   box-sizing: border-box;
 }
 
-/* header */
+/* -----------------------------------
+   HEADER
+----------------------------------- */
 .orders-head {
   display: flex;
   align-items: center;
@@ -25,15 +27,29 @@
   flex-wrap: wrap;
 }
 
-/* shared controls */
+/* -----------------------------------
+   SHARED CONTROL STYLES
+----------------------------------- */
 .control {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.control-row { display: flex; gap: 8px; align-items: center; }
-.control-row.daterow { gap: 10px; }
-.control label { font-size: 12px; color: #666; }
+
+.control-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.control-row.daterow {
+  gap: 10px;
+}
+
+.control label {
+  font-size: 12px;
+  color: #666;
+}
 
 .date-input {
   border: 1px solid #e5e5e5;
@@ -44,7 +60,34 @@
   cursor: pointer;
 }
 
-/* list */
+/* -----------------------------------
+   DATE PICKER POPUP
+----------------------------------- */
+.react-datepicker {
+  font-family: inherit;
+  border: 1px solid #eee;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+}
+
+.react-datepicker__header {
+  background: #fff;
+  border-bottom: 1px solid #f1f1f1;
+}
+
+.react-datepicker__day--selected,
+.react-datepicker__day--in-range,
+.react-datepicker__day--in-selecting-range {
+  background-color: tomato !important;
+  color: #fff !important;
+}
+
+.react-datepicker__day:hover {
+  background: #ffe5de;
+}
+
+/* -----------------------------------
+   ORDER LIST BASIC
+----------------------------------- */
 .orders-count {
   margin: 6px 2px 12px;
   color: #444;
@@ -57,10 +100,38 @@
   gap: 16px;
 }
 
-/* card with image removed: two columns -> content | status */
+/* -----------------------------------
+   SESSION GROUPS
+----------------------------------- */
+.session-block {
+  margin-bottom: 28px;
+  padding: 16px 12px;
+  border-radius: 12px;
+  background: #fff7f5;
+  border: 1px solid #f5cdc4;
+}
+
+.session-title {
+  font-size: 18px;
+  margin: 0 0 12px;
+  font-weight: 700;
+  color: #b53d2b;
+}
+
+.session-title span {
+  background: #fff;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #f1c5bb;
+  font-size: 14px;
+}
+
+/* -----------------------------------
+   ORDER CARD
+----------------------------------- */
 .order {
   display: grid;
-  grid-template-columns: 1fr 240px;
+  grid-template-columns: 1fr 260px;
   gap: 14px;
   padding: 16px;
   border: 1px solid #f1c5bb;
@@ -69,11 +140,31 @@
   box-shadow: 0 2px 8px rgba(0,0,0,0.03);
 }
 
-.order-content { display: flex; flex-direction: column; gap: 8px; }
-.order-items { font-weight: 700; margin: 0; }
-.order-customer { margin: 0; color: #444; }
+.order-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 
-.order-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+.order-items {
+  font-weight: 700;
+  margin: 0;
+}
+
+.order-customer {
+  margin: 0;
+  color: #444;
+}
+
+.order-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* -----------------------------------
+   CHIP STYLES
+----------------------------------- */
 .chip {
   font-size: 12px;
   color: #374151;
@@ -82,9 +173,54 @@
   border-radius: 999px;
   padding: 6px 10px;
 }
-.chip.ts { color: #6b7280; }
 
-/* status select */
+.chip.ts {
+  color: #6b7280;
+}
+
+/* ADHOC TAG */
+.chip.adhoc {
+  background: #fff0b3;
+  border-color: #ffd974;
+  color: #926f00;
+  font-weight: 600;
+}
+
+/* FINAL TAG */
+.chip.final {
+  background: #d6ffe3;
+  border-color: #97f5b8;
+  color: #0f8a39;
+  font-weight: 600;
+}
+
+/* PAID TAG */
+.chip.pay-paid {
+  background: #dcffe8;
+  border-color: #94f5b4;
+  color: #0a8a36;
+  font-weight: 600;
+}
+
+/* UNPAID TAG */
+.chip.pay-unpaid {
+  background: #ffe5e5;
+  border-color: #ffbaba;
+  color: #b12828;
+  font-weight: 600;
+}
+
+/* FINAL BILL (merged session total) */
+.chip.final-total {
+  background: #e3f1ff;
+  border-color: #b8d8ff;
+  color: #0057b8;
+  font-weight: 700;
+}
+
+/* -----------------------------------
+   STATUS SELECT
+----------------------------------- */
 .order-status {
   justify-self: end;
   align-self: center;
@@ -100,37 +236,19 @@
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
+  cursor: pointer;
 }
 
-/* datepicker popover look */
-.react-datepicker {
-  font-family: inherit;
-  border: 1px solid #eee;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
-}
-.react-datepicker__header {
-  background: #fff;
-  border-bottom: 1px solid #f1f1f1;
-}
-.react-datepicker__day--selected,
-.react-datepicker__day--in-range,
-.react-datepicker__day--in-selecting-range {
-  background-color: tomato !important;
-  color: #fff !important;
-}
-.react-datepicker__day:hover { background: #ffe5de; }
-
-/* responsive tweaks */
-@media (max-width: 1100px) {
-  .orders-head { flex-direction: column; align-items: flex-start; }
-  .order {
-    grid-template-columns: 1fr;    /* stack */
-  }
-  .order-status { width: 100%; }
-  .date-input { width: 100%; min-width: 160px; }
+/* -----------------------------------
+   ACTION BUTTONS
+----------------------------------- */
+.order-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
-/* print button */
 .btn {
   border: 1px solid #f1c5bb;
   background: #ffe3dd;
@@ -139,5 +257,56 @@
   cursor: pointer;
   font-weight: 600;
 }
-.btn:hover { filter: brightness(0.98); }
-.btn:active { transform: translateY(1px); }
+
+.btn:hover {
+  filter: brightness(0.98);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+/* MARK PAID BUTTON */
+.btn.btn-paid {
+  background: #d4ffe5;
+  border-color: #9be9c0;
+  color: #0c7d3c;
+}
+
+.btn.btn-paid:hover {
+  background: #c4ffdc;
+}
+
+/* PRINT BUTTON */
+.btn.btn-print {
+  background: #ffe7d9;
+  border-color: #f3c3a9;
+  color: #b34800;
+}
+
+.btn.btn-print:hover {
+  background: #ffd9c0;
+}
+
+/* -----------------------------------
+   RESPONSIVE
+----------------------------------- */
+@media (max-width: 1100px) {
+  .orders-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .order {
+    grid-template-columns: 1fr;
+  }
+
+  .order-status {
+    width: 100%;
+  }
+
+  .date-input {
+    width: 100%;
+    min-width: 160px;
+  }
+}

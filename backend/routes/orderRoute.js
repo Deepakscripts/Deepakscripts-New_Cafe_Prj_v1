@@ -2,37 +2,58 @@
 import express from "express";
 import authMiddleware from "../middleware/auth.js";
 import adminOnly from "../middleware/admin.js";
+
 import {
-  listOrders,
-  // placeOrder,
-  updateStatus,
-  userOrders,
-  verifyOrder,
+  placeOrderAdhoc,
   placeOrderCod,
+  convertAdhocToFinal,
+  listOrders,
+  userOrders,
+  updateStatus,
+  verifyOrder,
   getOrderById,
 } from "../controllers/orderController.js";
 
 const orderRouter = express.Router();
 
-// Admin: list all orders
+/* --------------------------------------------
+ * ADMIN ROUTES
+ * -------------------------------------------- */
+
+// List all orders (with date filter / type filter)
 orderRouter.get("/list", adminOnly, listOrders);
 
-// Admin: get single order by id (for printing)
+// Get single order (for printing or details)
 orderRouter.get("/:id", adminOnly, getOrderById);
 
-// User: list own orders
-orderRouter.post("/userorders", authMiddleware, userOrders);
-
-// Stripe path (kept for future): creates order, returns session URL
-// orderRouter.post("/place", authMiddleware, placeOrder);
-
-// Update order status (admin panel)
+// Update order status (pending → preparing → ready → served)
 orderRouter.post("/status", adminOnly, updateStatus);
 
-// Stripe webhook-style verification endpoint used by frontend verify step
-orderRouter.post("/verify", verifyOrder);
 
-// Pay on Counter (POC): immediate order creation
+/* --------------------------------------------
+ * USER ROUTES
+ * -------------------------------------------- */
+
+// Get orders for logged-in user
+orderRouter.get("/user", authMiddleware, userOrders);
+// (You were using POST earlier; now GET is cleaner.)
+// If you still need POST support, uncomment next line:
+// orderRouter.post("/userorders", authMiddleware, userOrders);
+
+// Place ADHOC order (quick order, customer will order more later)
+orderRouter.post("/placeadhoc", authMiddleware, placeOrderAdhoc);
+
+// Place FINAL order (Pay on Counter)
 orderRouter.post("/placecod", authMiddleware, placeOrderCod);
+
+// Convert all adhoc orders → final merged bill
+orderRouter.post("/adhoc-to-final", authMiddleware, convertAdhocToFinal);
+
+
+/* --------------------------------------------
+ * OPTIONAL LEGACY VERIFY (Stripe, etc.)
+ * -------------------------------------------- */
+
+orderRouter.post("/verify", verifyOrder);
 
 export default orderRouter;

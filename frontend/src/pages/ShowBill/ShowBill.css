@@ -1,0 +1,58 @@
+.showbill {
+  padding: 2rem 0;
+}
+
+.showbill h2 {
+  margin-bottom: 1.5rem;
+}
+
+.showbill-orders {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+
+.showbill-card {
+  border: 1px solid #ddd;
+  padding: 1rem;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.adhoc-tag {
+  background: #ffb300;
+  padding: 4px 8px;
+  color: #000;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.showbill-total-box {
+  margin-top: 2rem;
+  padding: 1.2rem;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  background: #fafafa;
+  text-align: center;
+}
+
+.finalize-btn {
+  margin-top: 1rem;
+  padding: 0.8rem 1.8rem;
+  background: #ff6a00;
+  border: none;
+  color: #fff;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.finalize-btn:hover {
+  background: #e65c00;
+}
+
+.showbill-empty,
+.showbill-loading {
+  padding: 3rem;
+  text-align: center;
+}

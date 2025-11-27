@@ -1,29 +1,53 @@
 // frontend/src/Context/StoreContext.jsx
-import { createContext, useEffect, useState } from "react";
-import { menu_list } from "../assets/assets";
+import { createContext, useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { toast } from "react-toastify";
+import { v4 as uuidv4 } from "uuid";
+import { menu_list } from "../assets/assets";
 
 export const StoreContext = createContext(null);
 
 const StoreContextProvider = (props) => {
-  // Prefer env; fallback to same host the browser is using
+  // ------------------ CONFIG ------------------
   const API_BASE =
     import.meta.env.VITE_API_BASE_URL ||
     `http://${window.location.hostname}:4000`;
   const url = API_BASE;
 
-  const [food_list, setFoodList] = useState([]);
-  const [cartItems, setCartItems] = useState({});
-  const [token, setToken] = useState("");
-  const [isAuthReady, setIsAuthReady] = useState(false); // <--- ADDED
-
   const currency = "₹";
   const deliveryCharge = 0;
 
-  // ---------- Guest cart persistence ----------
+  // ------------------ STATE ------------------
+  const [food_list, setFoodList] = useState([]);
+  const [cartItems, setCartItems] = useState({});
+  const [token, setToken] = useState(localStorage.getItem("token") || "");
+  const [isAuthReady, setIsAuthReady] = useState(false);
+
+  // dining session grouping (adhoc → final)
+  const [sessionId, setSessionId] = useState(
+    localStorage.getItem("momo_session_id") || null
+  );
+
+  // ------------------ LOCAL STORAGE KEYS ------------------
   const LS_KEY_CART = "guest_cart";
   const LS_KEY_ADDONS = "guest_addons";
 
+  // ------------------ SESSION ID ------------------
+  const ensureSessionId = () => {
+    let sid = sessionId;
+    if (!sid) {
+      sid = uuidv4();
+      localStorage.setItem("momo_session_id", sid);
+      setSessionId(sid);
+    }
+    return sid;
+  };
+
+  useEffect(() => {
+    ensureSessionId();
+  }, []);
+
+  // ------------------ GUEST CART PERSISTENCE ------------------
   const readGuestCart = () => {
     try {
       const raw = localStorage.getItem(LS_KEY_CART);
@@ -35,13 +59,10 @@ const StoreContextProvider = (props) => {
   const writeGuestCart = (data) => {
     try {
       localStorage.setItem(LS_KEY_CART, JSON.stringify(data || {}));
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   };
 
-  // ---------- CHEESE ADD-ONS ----------
-  // Counts per category: Pasta and Moburg
+  // ------------------ CHEESE ADD-ONS ------------------
   const [cheeseAddOns, setCheeseAddOns] = useState(() => {
     try {
       const raw = localStorage.getItem(LS_KEY_ADDONS);
@@ -54,9 +75,7 @@ const StoreContextProvider = (props) => {
   const persistCheese = (obj) => {
     try {
       localStorage.setItem(LS_KEY_ADDONS, JSON.stringify(obj));
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   };
 
   const updateCheeseAddOns = (next) => {
@@ -67,27 +86,26 @@ const StoreContextProvider = (props) => {
     });
   };
 
-  // Rs 20 per extra cheese
   const getAddOnTotal = () =>
     20 * (Number(cheeseAddOns.pasta || 0) + Number(cheeseAddOns.moburg || 0));
 
-  // Grand total with add-ons and delivery
   const getGrandTotal = () => {
     const base = getTotalCartAmount();
     if (base === 0) return 0;
     return base + deliveryCharge + getAddOnTotal();
   };
 
-  // Create order snapshot INCLUDING add-ons (so admin/bill show them)
-  const buildClientCartSnapshot = () => {
+  // ------------------ CART SNAPSHOT (INCLUDING ADDONS) ------------------
+  const buildClientCartSnapshot = useCallback(() => {
     const items = [];
 
-    // regular items from cart
     Object.entries(cartItems || {}).forEach(([id, qty]) => {
       const quantity = Number(qty) || 0;
       if (quantity <= 0) return;
+
       const prod = (food_list || []).find((p) => String(p._id) === String(id));
       if (!prod) return;
+
       items.push({
         itemId: String(prod._id),
         name: String(prod.name || ""),
@@ -96,8 +114,8 @@ const StoreContextProvider = (props) => {
       });
     });
 
-    // add-on lines (synthetic ids)
-    if (Number(cheeseAddOns.pasta) > 0) {
+    // add-on synthetic lines
+    if (cheeseAddOns.pasta > 0) {
       items.push({
         itemId: "addon:cheese:pasta",
         name: "Extra Cheese (Pasta)",
@@ -105,7 +123,7 @@ const StoreContextProvider = (props) => {
         quantity: Number(cheeseAddOns.pasta),
       });
     }
-    if (Number(cheeseAddOns.moburg) > 0) {
+    if (cheeseAddOns.moburg > 0) {
       items.push({
         itemId: "addon:cheese:moburg",
         name: "Extra Cheese (Moburg)",
@@ -115,19 +133,28 @@ const StoreContextProvider = (props) => {
     }
 
     return items;
-  };
+  }, [cartItems, cheeseAddOns, food_list]);
 
-  // ---------- keep localStorage in sync when logged out ----------
+  // ------------------ LOCAL CART SYNC ------------------
   useEffect(() => {
     if (!token) writeGuestCart(cartItems);
   }, [cartItems, token]);
 
+  // ------------------ ADD/REMOVE WITH TOAST ------------------
   const addToCart = async (itemId) => {
     if (!itemId) return;
+
+    const food = food_list.find((f) => String(f._id) === String(itemId));
+
     setCartItems((prev) => {
       const next = { ...prev, [itemId]: (prev[itemId] || 0) + 1 };
       return next;
     });
+
+    toast.success(`${food?.name || "Item"} added to cart`, {
+      autoClose: 1200,
+    });
+
     if (token) {
       await axios.post(url + "/api/cart/add", { itemId }, { headers: { token } });
     }
@@ -135,6 +162,9 @@ const StoreContextProvider = (props) => {
 
   const removeFromCart = async (itemId) => {
     if (!itemId) return;
+
+    const food = food_list.find((f) => String(f._id) === String(itemId));
+
     setCartItems((prev) => {
       const qty = (prev[itemId] || 0) - 1;
       const next = { ...prev };
@@ -142,64 +172,83 @@ const StoreContextProvider = (props) => {
       else next[itemId] = qty;
       return next;
     });
+
+    toast.info(`${food?.name || "Item"} removed`, { autoClose: 1200 });
+
     if (token) {
-      await axios.post(url + "/api/cart/remove", { itemId }, { headers: { token } });
+      await axios.post(
+        url + "/api/cart/remove",
+        { itemId },
+        { headers: { token } }
+      );
     }
   };
 
+  // ------------------ CLEAR CART ------------------
+  const clearCart = async () => {
+    setCartItems({});
+    try {
+      if (token) {
+        await axios.post(url + "/api/cart/clear", {}, { headers: { token } });
+      } else {
+        writeGuestCart({});
+      }
+    } catch {}
+  };
+
+  // ------------------ TOTAL AMOUNT ------------------
   const getTotalCartAmount = () => {
     let totalAmount = 0;
     for (const item in cartItems) {
       try {
         if (cartItems[item] > 0) {
-          const itemInfo = food_list.find(
-            (product) => String(product._id) === String(item)
+          const food = food_list.find(
+            (p) => String(p._id) === String(item)
           );
-          if (itemInfo) totalAmount += Number(itemInfo.price || 0) * cartItems[item];
+          if (food)
+            totalAmount += Number(food.price || 0) * cartItems[item];
         }
-      } catch {
-        // ignore lookup errors
-      }
+      } catch {}
     }
     return totalAmount;
   };
 
-  // Ensure every item has a stable string _id
+  // ------------------ NORMALIZE IDS ------------------
   const normalizeIds = (list) =>
     (list || []).map((it) => {
       const id = it?._id ?? it?.id ?? it?.itemId;
       return { ...it, _id: id != null ? String(id) : undefined };
     });
 
-  // Fetch items from backend
+  // ------------------ FETCH MENU ------------------
   const fetchFoodList = async () => {
     try {
       const response = await axios.get(url + "/api/food/list");
-      const dbItems = Array.isArray(response?.data?.data) ? response.data.data : [];
+      const dbItems = Array.isArray(response?.data?.data)
+        ? response.data.data
+        : [];
       setFoodList(normalizeIds(dbItems));
-    } catch (err) {
-      console.error("Error fetching food list:", err);
-      setFoodList([]); // safe fallback if API fails
+    } catch {
+      setFoodList([]);
     }
   };
 
-  /**
-   * Load server cart, merge any guest cart, persist merged on server,
-   * then set state to the merged result.
-   * Accepts either {token: <jwt>} or a bare string token.
-   */
-  const loadCartData = async (tokenOrObj) => {
+  // ------------------ LOAD SERVER CART ------------------
+  const loadCartData = async (tokenObjOrString) => {
     const hdrs =
-      typeof tokenOrObj === "string" ? { token: tokenOrObj } : tokenOrObj;
+      typeof tokenObjOrString === "string"
+        ? { token: tokenObjOrString }
+        : tokenObjOrString;
 
     const res = await axios.post(url + "/api/cart/get", {}, { headers: hdrs });
     const serverCart = res?.data?.cartData || {};
 
     const guestCart = readGuestCart();
-    let merged = serverCart;
-    const guestHasItems = Object.values(guestCart).some((q) => Number(q) > 0);
+    const hasGuest = Object.values(guestCart).some((q) => Number(q) > 0);
 
-    if (guestHasItems) {
+    let merged = serverCart;
+
+    if (hasGuest) {
       const mergeRes = await axios.post(
         url + "/api/cart/merge",
         { cart: guestCart },
@@ -214,9 +263,7 @@ const StoreContextProvider = (props) => {
     return merged;
   };
 
-  // -----------------------------
-  // Clamp cheese counts to cart
-  // -----------------------------
+  // ------------------ ADD-ON CLAMPING ------------------
   const getCategory = (item) => {
     const raw =
       item?.category ||
@@ -248,79 +295,75 @@ const StoreContextProvider = (props) => {
     return { pastaMax, moburgMax };
   };
 
-  // whenever cart or menu changes, clamp add-ons so they never exceed allowed max
   useEffect(() => {
     const { pastaMax, moburgMax } = computeCheeseCaps(cartItems, food_list);
 
     setCheeseAddOns((prev) => {
-      const clamped = {
+      const next = {
         pasta: Math.min(prev.pasta || 0, pastaMax),
         moburg: Math.min(prev.moburg || 0, moburgMax),
       };
-      // only persist if something changed
-      if (
-        clamped.pasta !== prev.pasta ||
-        clamped.moburg !== prev.moburg
-      ) {
-        persistCheese(clamped);
-        return clamped;
+
+      if (next.pasta !== prev.pasta || next.moburg !== prev.moburg) {
+        persistCheese(next);
+        return next;
       }
       return prev;
     });
-  }, [cartItems, food_list]); // clamp on either change
+  }, [cartItems, food_list]);
 
-  // initial boot
+  // ------------------ INITIAL BOOT ------------------
   useEffect(() => {
     async function loadData() {
       try {
         await fetchFoodList();
-        const saved = localStorage.getItem("token");
-        if (saved) {
-          setToken(saved);
-          await loadCartData({ token: saved });
+
+        if (token) {
+          await loadCartData({ token });
         } else {
           setCartItems(readGuestCart());
         }
-      } catch (error) {
-        console.error("Initial data load failed", error);
+      } catch (e) {
+        console.error("initial load failed", e);
       } finally {
-        setIsAuthReady(true); // <--- ADDED
+        setIsAuthReady(true);
       }
     }
     loadData();
   }, []);
 
+  // ------------------ CONTEXT VALUE ------------------
   const contextValue = {
-    // config
     url,
     currency,
     deliveryCharge,
 
-    // data
     food_list,
     setFoodList,
     menu_list,
 
-    // cart
     cartItems,
     setCartItems,
     addToCart,
     removeFromCart,
+    clearCart,
     getTotalCartAmount,
 
-    // auth
     token,
     setToken,
     loadCartData,
-    isAuthReady, // <--- ADDED
+    isAuthReady,
 
-    // add-ons
     cheeseAddOns,
     setCheeseAddOns,
     updateCheeseAddOns,
     getAddOnTotal,
     getGrandTotal,
+
     buildClientCartSnapshot,
+
+    sessionId,
+    ensureSessionId,
   };
 
   return (

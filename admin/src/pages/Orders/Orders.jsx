@@ -1,19 +1,42 @@
 // food-del/admin/src/pages/Orders/Orders.jsx
-import React, { useEffect, useState, useEffect as UseEffect2 } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import "./Orders.css";
 import "./InlinePrint.css";
+
 import axios from "axios";
 import { toast } from "react-toastify";
 import { url } from "../../assets/assets";
+
 import DatePicker from "react-datepicker";
-import { format, parseISO } from "date-fns";
 import "react-datepicker/dist/react-datepicker.css";
-// const ADMIN_KEY = import.meta.env.VITE_ADMIN_KEY;
 
+import { io } from "socket.io-client";
+import { format, parseISO } from "date-fns";
 
-/* helpers */
+// ---------------------- SOCKET INIT ----------------------
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+const socket = io(API_BASE, {
+  transports: ["websocket"],
+  withCredentials: true,
+});
+
+// ---------------------- SAFE HELPERS ----------------------
+const safeUpper = (v, fallback = "") =>
+  v ? String(v).toUpperCase() : fallback;
+
+const safeStatus = (v) =>
+  v ? String(v).toUpperCase() : "PENDING";
+
+const safeOrderType = (v) =>
+  v ? String(v).toUpperCase() : "UNKNOWN";
+
+const safePaymentStatus = (v) =>
+  v ? String(v).toUpperCase() : "UNPAID";
+
+// ---------------------- HELPERS ----------------------
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const currency = (n) => `₹${Number(n || 0)}`;
+
 const qs = (obj) => {
   const p = [];
   Object.entries(obj).forEach(([k, v]) => {
@@ -24,7 +47,7 @@ const qs = (obj) => {
   return p.length ? `?${p.join("&")}` : "";
 };
 
-/* shared date range component (same UX as Analytics) */
+// ---------------------- DATE RANGE ----------------------
 function DateRange({ from, to, onChange }) {
   const toDateObj = (iso) => (iso ? parseISO(iso) : null);
   const toISO = (d) => (d ? format(d, "yyyy-MM-dd") : "");
@@ -35,65 +58,37 @@ function DateRange({ from, to, onChange }) {
   useEffect(() => setStart(toDateObj(from)), [from]);
   useEffect(() => setEnd(toDateObj(to)), [to]);
 
-  const onFromChange = (d) => {
-    if (!d) {
-      setStart(null);
-      onChange({ from: "" });
-      return;
-    }
-    if (end && d > end) {
-      setStart(end);
-      setEnd(d);
-      onChange({ from: toISO(end), to: toISO(d) });
-    } else {
-      setStart(d);
-      onChange({ from: toISO(d) });
-    }
-  };
-
-  const onToChange = (d) => {
-    if (!d) {
-      setEnd(null);
-      onChange({ to: "" });
-      return;
-    }
-    if (start && d < start) {
-      setEnd(start);
-      setStart(d);
-      onChange({ from: toISO(d), to: toISO(start) });
-    } else {
-      setEnd(d);
-      onChange({ to: toISO(d) });
-    }
-  };
-
   return (
     <div className="control">
       <label>Date range</label>
       <div className="control-row daterow">
         <DatePicker
           selected={start}
-          onChange={onFromChange}
+          onChange={(d) => {
+            if (!d) {
+              setStart(null);
+              onChange({ from: "" });
+              return;
+            }
+            setStart(d);
+            onChange({ from: toISO(d) });
+          }}
           dateFormat="dd-MM-yyyy"
-          placeholderText="From"
-          showMonthDropdown
-          showYearDropdown
-          dropdownMode="select"
-          calendarStartDay={1}
-          showPopperArrow={false}
           className="date-input"
         />
         <span>to</span>
         <DatePicker
           selected={end}
-          onChange={onToChange}
+          onChange={(d) => {
+            if (!d) {
+              setEnd(null);
+              onChange({ to: "" });
+              return;
+            }
+            setEnd(d);
+            onChange({ to: toISO(d) });
+          }}
           dateFormat="dd-MM-yyyy"
-          placeholderText="To"
-          showMonthDropdown
-          showYearDropdown
-          dropdownMode="select"
-          calendarStartDay={1}
-          showPopperArrow={false}
           className="date-input"
         />
       </div>
@@ -101,27 +96,33 @@ function DateRange({ from, to, onChange }) {
   );
 }
 
-/* ---------- Printable Ticket (inline) ---------- */
+// ---------------------- PRINTABLE TICKET ----------------------
 function PrintableTicket({ order }) {
   if (!order) return null;
 
   const created = new Date(order.createdAt || Date.now());
   const two = (n) => String(n).padStart(2, "0");
-  const ts = `${created.getDate()}-${two(created.getMonth() + 1)}-${created.getFullYear()} ${two(created.getHours())}:${two(created.getMinutes())}`;
-  const totalQty = (order.items || []).reduce((s, i) => s + (Number(i.quantity) || 0), 0);
-  const amount = Number(order.amount || 0).toFixed(2);
+  const ts = `${created.getDate()}-${two(created.getMonth() + 1)}-${created.getFullYear()} ${two(
+    created.getHours()
+  )}:${two(created.getMinutes())}`;
+
+  const totalQty = (order.items || []).reduce((s, i) => s + Number(i.quantity || 0), 0);
+  const amount = Number(order.mergedSessionAmount || order.amount || 0).toFixed(2);
 
   return (
     <div className="ticket-root printable">
       <div className="ticket">
+
         <div className="ticket-header">
           <div className="brand">MOMO MAGIC</div>
-          <div className="sub">Kitchen Ticket</div>
+          <div className="sub">
+            {order.orderType === "adhoc" ? "Adhoc Ticket" : "Final Ticket"}
+          </div>
         </div>
 
         <div className="ticket-meta">
-          <div>No: {String(order._id).slice(-6).toUpperCase()}</div>
-          <div>Table: {order.tableNumber ?? "-"}</div>
+          <div>Status: {safeStatus(order.status)}</div>
+          <div>Table: {order.tableNumber}</div>
           <div>Time: {ts}</div>
         </div>
 
@@ -133,11 +134,14 @@ function PrintableTicket({ order }) {
             <div className="col name">ITEM</div>
             <div className="col price">AMT</div>
           </div>
+
           {(order.items || []).map((it, idx) => (
             <div key={idx} className="row">
               <div className="col qty">{it.quantity}</div>
               <div className="col name">{it.name}</div>
-              <div className="col price">₹{Number((it.price || 0) * (it.quantity || 0)).toFixed(2)}</div>
+              <div className="col price">
+                ₹{Number(it.price * it.quantity).toFixed(2)}
+              </div>
             </div>
           ))}
         </div>
@@ -155,153 +159,212 @@ function PrintableTicket({ order }) {
           </div>
         </div>
 
-        <div className="ticket-sep" />
-
         <div className="ticket-footer">
-          <div>Customer: {(order.firstName || "—") + " " + (order.lastName || "")}</div>
-          <div>Status: {String(order.status || "").toUpperCase()}</div>
-          <div className="copy">KITCHEN COPY</div>
+          <div>Customer: {order.firstName} {order.lastName}</div>
+          <div>Status: {safeStatus(order.status)}</div>
         </div>
 
-        <div className="cut">─────── cut here ───────</div>
+        <div className="cut">────── cut here ───────</div>
+
       </div>
     </div>
   );
 }
 
+// ---------------------- MAIN PAGE ----------------------
 const Orders = () => {
-  /* default to today */
   const [from, setFrom] = useState(todayISO());
   const [to, setTo] = useState(todayISO());
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // which order is being printed
   const [printOrder, setPrintOrder] = useState(null);
 
-  async function fetchOrders() {
+  // ---------------- FETCH ----------------
+  const fetchOrders = async () => {
     try {
       setLoading(true);
       const r = await axios.get(`${url}/api/order/list${qs({ from, to })}`);
-      setOrders(Array.isArray(r.data?.data) ? r.data.data : []);
-    } catch {
+      setOrders(r.data?.orders || []);
+    } catch (err) {
       toast.error("Failed to load orders");
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
     fetchOrders();
   }, [from, to]);
 
-  // status change
+  // ---------------- SOCKET ----------------
+  useEffect(() => {
+    socket.on("order.created", ({ orderType }) => {
+      toast.info(`New ${safeOrderType(orderType)} order received`);
+      fetchOrders();
+    });
+
+    socket.on("order.updated", fetchOrders);
+
+    return () => {
+      socket.off("order.created");
+      socket.off("order.updated");
+    };
+  }, []);
+
+  // ---------------- UPDATE STATUS ----------------
   const updateStatus = async (orderId, status) => {
     try {
       const r = await axios.post(`${url}/api/order/status`, { orderId, status });
       if (r.data?.success) {
-        setOrders((prev) => prev.map((o) => (o._id === orderId ? { ...o, status } : o)));
-      } else {
-        toast.error(r.data?.message || "Failed to update");
+        toast.success("Status updated");
+        fetchOrders();
       }
     } catch {
       toast.error("Failed to update");
     }
   };
 
-  // trigger print in the same tab
-  const handlePrint = (order) => {
-    setPrintOrder(order);
+  const markPaid = async (orderId) => {
+    try {
+      const r = await axios.post(`${url}/api/order/status`, {
+        orderId,
+        paymentStatus: "paid",
+      });
+      if (r.data?.success) {
+        toast.success("Marked as paid");
+        fetchOrders();
+      }
+    } catch {
+      toast.error("Failed to mark paid");
+    }
   };
 
-  // after printOrder mounts, fire print and clean up
-  UseEffect2(() => {
+  // ---------------- PRINT ----------------
+  useEffect(() => {
     if (!printOrder) return;
-    const onAfterPrint = () => setPrintOrder(null);
-    // give the DOM a tick to render the ticket before printing
-    const t = setTimeout(() => window.print(), 50);
-    window.addEventListener("afterprint", onAfterPrint);
+    const afterPrint = () => setPrintOrder(null);
+    const t = setTimeout(() => window.print(), 40);
+
+    window.addEventListener("afterprint", afterPrint);
     return () => {
       clearTimeout(t);
-      window.removeEventListener("afterprint", onAfterPrint);
+      window.removeEventListener("afterprint", afterPrint);
     };
   }, [printOrder]);
 
-  const totalOrders = orders.length;
+  // ---------------- GROUP BY sessionId ----------------
+  const grouped = useMemo(() => {
+    const map = new Map();
+    for (const o of orders) {
+      const sid = o.sessionId || "no-session";
+      if (!map.has(sid)) map.set(sid, []);
+      map.get(sid).push(o);
+    }
+    return Array.from(map.entries());
+  }, [orders]);
 
   return (
     <div className="orders">
-      {/* inline, hidden until printing */}
+
       {printOrder && <PrintableTicket order={printOrder} />}
 
       <div className="orders-head">
         <h3>Orders</h3>
-        <div className="orders-filters">
-          <DateRange
-            from={from}
-            to={to}
-            onChange={({ from: f, to: t }) => {
-              if (f !== undefined) setFrom(f);
-              if (t !== undefined) setTo(t);
-            }}
-          />
-        </div>
+        <DateRange
+          from={from}
+          to={to}
+          onChange={({ from: f, to: t }) => {
+            if (f !== undefined) setFrom(f);
+            if (t !== undefined) setTo(t);
+          }}
+        />
       </div>
 
       {loading ? (
         <div className="loader">Loading…</div>
       ) : (
         <>
-          <div className="orders-count">
-            {totalOrders} order{totalOrders === 1 ? "" : "s"}
-          </div>
+          <div className="orders-count">{orders.length} orders</div>
 
-          <div className="orders-list">
-            {orders.map((order) => (
-              <div className="order" key={order._id}>
-                <div className="order-content">
-                  <p className="order-items">
-                    {order.items.map((i) => `${i.name} x ${i.quantity}`).join(", ")}
-                  </p>
-                  <p className="order-customer">
-                    {order.firstName || "Test"} {order.lastName || "User"}
-                  </p>
-                  <div className="order-meta">
-                    <span className="chip">Email: {order.email || "—"}</span>
-                    <span className="chip">Table: {order.tableNumber ?? "—"}</span>
-                    <span className="chip">
-                      Items: {order.items?.reduce((s, i) => s + (i.quantity || 0), 0) || 0}
-                    </span>
-                    <span className="chip">Total: {currency(order.amount)}</span>
-                    <span className="chip ts">
-                      {new Date(order.createdAt).toLocaleString()}
-                    </span>
+          {grouped.map(([sessionId, list]) => (
+            <div key={sessionId} className="session-block">
+              <h4 className="session-title">
+                Session: <span>{sessionId}</span>
+              </h4>
+
+              {list.map((order) => (
+                <div className="order" key={order._id}>
+                  <div className="order-content">
+
+                    <p className="order-items">
+                      {order.items.map((i) => `${i.name} x ${i.quantity}`).join(", ")}
+                    </p>
+
+                    <p className="order-customer">
+                      {order.firstName || "Customer"} {order.lastName || ""}
+                    </p>
+
+                    {/* TAGS */}
+                    <div className="tags">
+                      <span className={`chip ${order.orderType}`}>
+                        {safeOrderType(order.orderType)}
+                      </span>
+
+                      <span className={`chip pay-${order.paymentStatus}`}>
+                        {safePaymentStatus(order.paymentStatus)}
+                      </span>
+                    </div>
+
+                    <div className="order-meta">
+                      <span className="chip">Email: {order.email || "—"}</span>
+                      <span className="chip">Table: {order.tableNumber ?? "—"}</span>
+                      <span className="chip">
+                        Items: {order.items.reduce((n, i) => n + i.quantity, 0)}
+                      </span>
+                      <span className="chip">Total: {currency(order.amount)}</span>
+
+                      {order.orderType === "final" && (
+                        <span className="chip final-total">
+                          Final Bill: {currency(order.mergedSessionAmount || order.amount)}
+                        </span>
+                      )}
+
+                      <span className="chip ts">
+                        {new Date(order.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* ACTIONS */}
+                  <div className="order-actions">
+                    <button className="btn btn-print" onClick={() => setPrintOrder(order)}>
+                      Print
+                    </button>
+
+                    <select
+                      className="order-status"
+                      value={order.status}
+                      onChange={(e) => updateStatus(order._id, e.target.value)}
+                    >
+                      <option value="pending">Pending</option>
+                      <option value="preparing">Preparing</option>
+                      <option value="ready">Ready</option>
+                      <option value="served">Served</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+
+                    {order.paymentStatus !== "paid" && (
+                      <button className="btn btn-paid" onClick={() => markPaid(order._id)}>
+                        Mark Paid
+                      </button>
+                    )}
                   </div>
                 </div>
-
-                <div
-                  className="order-actions"
-                  style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" }}
-                >
-                  <button className="btn btn-print" onClick={() => handlePrint(order)}>
-                    Print
-                  </button>
-
-                  <select
-                    className="order-status"
-                    value={order.status}
-                    onChange={(e) => updateStatus(order._id, e.target.value)}
-                  >
-                    <option value="pending">Pending</option>
-                    <option value="preparing">Preparing</option>
-                    <option value="served">Served</option>
-                    <option value="cancelled">Cancelled</option>
-                  </select>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ))}
         </>
       )}
     </div>
