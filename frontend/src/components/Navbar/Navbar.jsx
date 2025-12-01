@@ -1,32 +1,30 @@
 // frontend/src/components/Navbar/Navbar.jsx
-import React, { useContext, useEffect, useMemo, useState } from "react";
+// ===============================================================
+// CLEAN NAVBAR FOR NEW WORKFLOW
+// - No session/adhoc logic
+// - No ShowBill button
+// - Login happens from OTP popup only
+// - Orders = normal order history
+// ===============================================================
+
+import React, { useContext, useEffect, useState, useMemo } from "react";
 import "./Navbar.css";
 import { assets } from "../../assets/assets";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { StoreContext } from "../../Context/StoreContext";
 
 const Navbar = () => {
-  const {
-    getTotalCartAmount,
-    token,
-    setToken,
-    sessionId,
-    hasPendingAdhocOrders, // <-- optional: can be added in context
-  } = useContext(StoreContext);
+  const { getTotalCartAmount, token, setToken } = useContext(StoreContext);
 
   const navigate = useNavigate();
   const location = useLocation();
 
   const [menu, setMenu] = useState("home");
 
-  // Detect active tab from route
+  // Detect active tab
   useEffect(() => {
-    if (menu === "menu" || menu === "contact") return;
-
     if (location.pathname === "/myorders") setMenu("orders");
-    else if (location.pathname === "/show-bill") setMenu("bill");
-    else setMenu("home");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    else if (location.pathname.startsWith("/")) setMenu("home");
   }, [location.pathname]);
 
   const logout = () => {
@@ -36,15 +34,9 @@ const Navbar = () => {
     setMenu("home");
   };
 
-  const goToOrders = () => {
-    if (token) {
-      navigate("/myorders");
-      setMenu("orders");
-    }
-  };
-
   const handleMenuClick = () => {
     setMenu("menu");
+
     if (location.pathname !== "/") {
       navigate("/");
       setTimeout(() => {
@@ -61,9 +53,6 @@ const Navbar = () => {
 
   const cartHasItems = useMemo(() => getTotalCartAmount() > 0, [getTotalCartAmount]);
 
-  // Show Bill → only if logged in AND session has adhoc orders
-  const showBillVisible = token && sessionId;
-
   return (
     <div className="navbar">
       {/* LOGO */}
@@ -74,7 +63,7 @@ const Navbar = () => {
           setMenu("home");
         }}
       >
-        <img className="logo" src={assets.logo} alt="Momo Magic Cafe" />
+        <img className="logo" src={assets.logo} alt="Momo Magic Café" />
       </Link>
 
       {/* NAV CENTER */}
@@ -100,25 +89,16 @@ const Navbar = () => {
 
         <button
           type="button"
-          onClick={goToOrders}
+          onClick={() => {
+            if (token) {
+              navigate("/myorders");
+              setMenu("orders");
+            }
+          }}
           className={`linklike ${isActive("orders") ? "active" : ""}`}
         >
           Orders
         </button>
-
-        {/* NEW — Show Bill button */}
-        {showBillVisible && (
-          <button
-            type="button"
-            onClick={() => {
-              navigate("/show-bill");
-              setMenu("bill");
-            }}
-            className={`linklike ${isActive("bill") ? "active" : ""}`}
-          >
-            Show Bill
-          </button>
-        )}
 
         <a
           href="#footer"
@@ -141,9 +121,7 @@ const Navbar = () => {
         </Link>
 
         {/* PROFILE */}
-        {!token ? (
-          <></> // login not visible since OTP login is mandatory
-        ) : (
+        {token ? (
           <div className="navbar-profile-container">
             <div className="navbar-icon-container">
               <img src={assets.profile_icon} alt="Profile" />
@@ -160,24 +138,14 @@ const Navbar = () => {
                 <img src={assets.bag_icon} alt="" /> <p>Orders</p>
               </li>
 
-              {/* Show Bill inside dropdown also */}
-              {showBillVisible && (
-                <li
-                  onClick={() => {
-                    navigate("/show-bill");
-                    setMenu("bill");
-                  }}
-                >
-                  <img src={assets.bag_icon} alt="" /> <p>Show Bill</p>
-                </li>
-              )}
-
               <hr />
               <li onClick={logout}>
                 <img src={assets.logout_icon} alt="" /> <p>Logout</p>
               </li>
             </ul>
           </div>
+        ) : (
+          <></> // login handled by OTP popup
         )}
       </div>
     </div>

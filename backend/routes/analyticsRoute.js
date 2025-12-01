@@ -1,6 +1,6 @@
 // backend/routes/analyticsRoute.js
 import express from "express";
-import adminOnly from "../middleware/admin.js";
+// import adminOnly from "../middleware/admin.js";
 import {
   newCustomers,
   repeatRate,
@@ -14,7 +14,7 @@ import {
 
 const router = express.Router();
 
-router.get("/new-customers", adminOnly, newCustomers);
+router.get("/new-customers", newCustomers);
 router.get("/repeat-rate", repeatRate);
 router.get("/top-dishes", (req, res, next) => { req.query.order = "desc"; next(); }, dishRank);
 router.get("/least-dishes", (req, res, next) => { req.query.order = "asc"; next(); }, dishRank);

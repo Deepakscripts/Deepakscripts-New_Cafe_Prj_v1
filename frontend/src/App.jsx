@@ -1,4 +1,11 @@
 // frontend/src/App.jsx
+// ===============================================================
+// UPDATED FOR NEW WORKFLOW (NO SHOW-BILL, NO ADHOC)
+// - OTP login mandatory
+// - Users place only FINAL orders
+// - MyOrders shows pending + order history
+// ===============================================================
+
 import React, { useContext } from "react";
 import { Route, Routes, useLocation } from "react-router-dom";
 
@@ -10,20 +17,20 @@ import LoginPopup from "./components/LoginPopup/LoginPopup";
 import PlaceOrder from "./pages/PlaceOrder/PlaceOrder";
 import MyOrders from "./pages/MyOrders/MyOrders";
 import Verify from "./pages/Verify/Verify";
-import ShowBill from "./pages/ShowBill/ShowBill"; // ⭐ NEW PAGE
 
 import Footer from "./components/Footer/Footer";
 import Navbar from "./components/Navbar/Navbar";
 
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
+
 import { StoreContext } from "./Context/StoreContext";
 
 const App = () => {
   const { token, isAuthReady } = useContext(StoreContext);
   const location = useLocation();
 
-  // Wait for context to finish loading before rendering the application
+  // Wait for authentication + profile load
   if (!isAuthReady) {
     return (
       <div
@@ -44,15 +51,11 @@ const App = () => {
     <>
       <ToastContainer />
 
-      {/* 
-        If user is NOT logged in, immediately force login.
-        This modal overlays everything else.
-      */}
+      {/* FORCE LOGIN — OTP must appear until user logs in */}
       {!token && isAuthReady && (
         <LoginPopup setShowLogin={() => {}} forceLogin={true} />
       )}
 
-      {/* MAIN APPLICATION */}
       <div className="app">
         <Navbar />
 
@@ -62,18 +65,14 @@ const App = () => {
           <Route path="/about" element={<About />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
 
-          {/* CART + ORDER FLOW */}
+          {/* CART + FINAL ORDER FLOW ONLY */}
           <Route path="/cart" element={<Cart />} />
-          <Route path="/order" element={<PlaceOrder />} /> 
-          {/* Works for /order AND /order?adhoc=1 */}
+          <Route path="/order" element={<PlaceOrder />} />
 
-          {/* USER ORDER PAGES */}
+          {/* USER ORDER HISTORY */}
           <Route path="/myorders" element={<MyOrders />} />
 
-          {/* ⭐ NEW BILL PAGE */}
-          <Route path="/show-bill" element={<ShowBill />} />
-
-          {/* OTP VERIFY */}
+          {/* OTP VERIFY PAGE */}
           <Route path="/verify" element={<Verify />} />
 
           {/* FALLBACK */}
@@ -81,7 +80,7 @@ const App = () => {
         </Routes>
       </div>
 
-      {/* Hide footer only on OTP verify page */}
+      {/* Hide footer on OTP verification screen */}
       {location.pathname !== "/verify" && <Footer />}
     </>
   );

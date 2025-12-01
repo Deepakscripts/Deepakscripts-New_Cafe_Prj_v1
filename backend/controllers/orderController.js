@@ -1,392 +1,336 @@
 // backend/controllers/orderController.js
+// =======================================================
+// FINAL UPDATED CONTROLLER — ADMIN OPEN, USER PROTECTED
+// =======================================================
+
+import mongoose from "mongoose";
 import orderModel from "../models/orderModel.js";
 import userModel from "../models/userModel.js";
 import foodModel from "../models/foodModel.js";
-import mongoose from "mongoose";
 
 const isMongoId = (v) => mongoose.Types.ObjectId.isValid(String(v || ""));
 
-/* ---------------- helpers ---------------- */
+/* ---------------- HELPERS ---------------- */
 
-/**
- * Build an items snapshot and subtotal from a server-side cart map.
- * cartMap: { [itemId]: quantity }
- * Returns { items:[{itemId,name,price,quantity}], amount:number }
- *
- * This supports synthetic add-on itemIds (like "addon:cheese:pasta")
- * by returning them with the provided values only when the item isn't found
- * in the food collection.
- */
 async function buildItemsAndAmount(cartMap = {}) {
-  // collect candidate ids that look like mongo ids
-  const ids = Object.keys(cartMap || {}).filter(
+  if (!cartMap) return { items: [], amount: 0 };
+
+  const ids = Object.keys(cartMap).filter(
     (id) => Number(cartMap[id]) > 0 && isMongoId(id)
   );
 
   let foods = [];
-  if (ids.length) {
-    foods = await foodModel.find({ _id: { $in: ids } }).lean();
-  }
-  const byId = Object.fromEntries((foods || []).map((f) => [String(f._id), f]));
+  if (ids.length) foods = await foodModel.find({ _id: { $in: ids } }).lean();
+
+  const byId = Object.fromEntries(foods.map((f) => [String(f._id), f]));
 
   let amount = 0;
   const items = [];
 
-  for (const id of Object.keys(cartMap || {})) {
-    const qty = Number(cartMap[id]) || 0;
+  for (const id of Object.keys(cartMap)) {
+    const qty = Number(cartMap[id] || 0);
     if (qty <= 0) continue;
+    if (!byId[id]) continue;
 
-    // if item is a known food (mongo id)
-    if (byId[id]) {
-      const f = byId[id];
-      const price = Number(f.price || 0);
-      amount += price * qty;
-      items.push({
-        itemId: String(f._id),
-        name: String(f.name || ""),
-        price,
-        quantity: qty,
-      });
-    } else {
-      // not found in foods — treat as synthetic (e.g., addon)
-      // We need to decode price/name if cartMap stored objects; but in many flows
-      // the server-side cart contains only ids and qty; in that case we cannot
-      // resolve synthetic lines here — skip them.
-      // We'll skip unknown non-mongo ids here.
-      continue;
-    }
+    const food = byId[id];
+    const price = Number(food.price || 0);
+
+    amount += price * qty;
+    items.push({
+      itemId: id,
+      name: food.name,
+      price,
+      quantity: qty,
+    });
   }
 
   return { items, amount };
 }
 
-/** Sanitize a client-provided cart snapshot */
-function coerceClientCart(clientCart = []) {
-  const out = [];
+function coerceClientCart(clientCart) {
   let amount = 0;
+  const items = [];
+
   for (const raw of Array.isArray(clientCart) ? clientCart : []) {
-    const quantity = Math.max(0, parseInt(raw?.quantity ?? 0, 10));
-    const price = Number(raw?.price ?? 0);
-    const name = String(raw?.name ?? "");
-    const itemId = String(raw?.itemId ?? "");
-    if (!quantity || !name) continue;
-    out.push({ itemId, name, price, quantity });
+    const itemId = String(raw.itemId || "");
+    const name = String(raw.name || "");
+    const quantity = Number(raw.quantity || 0);
+    const price = Number(raw.price || 0);
+
+    if (!name || quantity <= 0) continue;
+
+    items.push({ itemId, name, price, quantity });
     amount += price * quantity;
   }
-  return { items: out, amount };
+
+  return { items, amount };
 }
 
-/* ---------------- place adhoc order ---------------- */
-/**
- * POST /api/order/placeadhoc
- * Body: { items (client snapshot) OR sessionCart, tableNumber, notes, sessionId }
- * Requires auth (recommended) — if no req.userId, fallback to guest-<sessionId>.
- */
-const placeOrderAdhoc = async (req, res) => {
-  try {
-    const {
-      items: clientCart = null,
-      tableNumber = null,
-      notes = "",
-      sessionId: clientSessionId = null,
-    } = req.body;
-
-    // user id from auth middleware; fallback to guest session id
-    const userId = req.userId || (clientSessionId ? `guest-${clientSessionId}` : "guest");
-
-    // Ensure sessionId
-    const sessionId = clientSessionId || req.body.sessionId || req.params?.sessionId || req.query?.sessionId;
-    if (!sessionId) {
-      return res.status(400).json({ success: false, message: "sessionId is required" });
-    }
-
-    // prefer client snapshot if provided
-    let items = [];
-    let amount = 0;
-
-    if (Array.isArray(clientCart) && clientCart.length) {
-      const coerced = coerceClientCart(clientCart);
-      items = coerced.items;
-      amount = coerced.amount;
-    } else {
-      // no client snapshot — try to read server-side cart stored on user (if present)
-      try {
-        if (req.userId) {
-          const user = await userModel.findById(req.userId).lean();
-          if (user && user.cartData) {
-            const built = await buildItemsAndAmount(user.cartData || {});
-            items = built.items;
-            amount = built.amount;
-          }
-        }
-      } catch (e) {
-        // ignore server cart resolution errors
-      }
-    }
-
-    if (!items.length) {
-      return res.status(400).json({ success: false, message: "No items to place adhoc order" });
-    }
-
-    // create adhoc order (unpaid)
-    const order = await orderModel.create({
-      userId: String(userId),
-      firstName: "", // adhoc should not require names; keep empty
-      lastName: "",
-      email: "",
-      tableNumber: Number(tableNumber || 0),
-      sessionId,
-      orderType: "adhoc",
-      items,
-      amount,
-      mergedSessionAmount: 0,
-      paymentStatus: "unpaid",
-      status: "pending",
-      notes: String(notes || ""),
-    });
-
-    // emit socket event for admin UI
-    try {
-      const io = req.app && req.app.get && req.app.get("io");
-      if (io) io.emit("order.created", { orderType: "adhoc", order });
-    } catch (e) {
-      console.warn("socket emit failed:", e?.message || e);
-    }
-
-    // optional: don't clear user cart here - user may continue ordering
-    return res.json({ success: true, order });
-  } catch (e) {
-    console.error("placeOrderAdhoc error", e);
-    return res.status(500).json({ success: false, message: "Error creating adhoc order" });
+/* ---------------- AUTH HELP ---------------- */
+async function requireUser(req, res) {
+  if (!req.userId) {
+    console.warn("401: requireUser → no req.userId in request");
+    res.status(401).json({ success: false, message: "Unauthorized" });
+    return null;
   }
-};
+  const user = await userModel.findById(req.userId);
+  if (!user) {
+    return res.status(404).json({ success: false, message: "User not found" });
+  }
+  return user;
+}
 
-/* ---------------- place order (Pay on Counter = FINAL) ---------------- */
-/**
- * POST /api/order/placecod
- * Body: { items (client snapshot) OR server cart, tableNumber, notes, sessionId, firstName, lastName, email }
- *
- * Creates a final order for the session. Does NOT remove adhoc history (we keep history).
- * final order will be created with orderType: 'final' and paymentStatus: 'unpaid'
- * (payment is collected at counter; admin can mark it paid).
- */
-const placeOrderCod = async (req, res) => {
+/* ============================================================
+   1) PLACE ORDER (USER)
+============================================================ */
+const placeOrder = async (req, res) => {
   try {
+    const user = await requireUser(req, res);
+    if (!user) return;
+
     const {
-      items: clientCart = null,
-      tableNumber = null,
+      items: clientCart,
+      tableNumber = 0,
       notes = "",
-      sessionId: clientSessionId = null,
       firstName = "",
       lastName = "",
       email = "",
     } = req.body;
 
-    const userId = req.userId || (clientSessionId ? `guest-${clientSessionId}` : "guest");
-    const sessionId = clientSessionId || req.body.sessionId || req.params?.sessionId || req.query?.sessionId;
-
-    if (!sessionId) {
-      return res.status(400).json({ success: false, message: "sessionId required" });
-    }
-
-    // Collect items and amount
     let items = [];
     let amount = 0;
+    let usedServerCart = false;
 
     if (Array.isArray(clientCart) && clientCart.length) {
-      const coerced = coerceClientCart(clientCart);
-      items = coerced.items;
-      amount = coerced.amount;
-    } else {
-      try {
-        if (req.userId) {
-          const user = await userModel.findById(req.userId).lean();
-          if (user && user.cartData) {
-            const built = await buildItemsAndAmount(user.cartData || {});
-            items = built.items;
-            amount = built.amount;
-          }
-        }
-      } catch (e) {
-        // ignore
-      }
+      ({ items, amount } = coerceClientCart(clientCart));
+    } else if (user.cartData && Object.keys(user.cartData).length) {
+      ({ items, amount } = await buildItemsAndAmount(user.cartData));
+      usedServerCart = true;
     }
 
     if (!items.length) {
-      return res.status(400).json({ success: false, message: "Cart is empty" });
+      return res
+        .status(400)
+        .json({ success: false, message: "No items provided or cart is empty" });
     }
 
-    // create final order (payment pending at counter)
-    const order = await orderModel.create({
-      userId: String(userId),
-      firstName: String(firstName || "").trim(),
-      lastName: String(lastName || "").trim(),
-      email: String(email || "").trim(),
+    const orderDoc = await orderModel.create({
+      userId: String(req.userId),
+      firstName: firstName || user.firstName || "",
+      lastName: lastName || user.lastName || "",
+      email: email || user.email || "",
       tableNumber: Number(tableNumber || 0),
-      sessionId,
-      orderType: "final",
+      orderType: "order",
       items,
       amount,
       mergedSessionAmount: amount,
-      paymentStatus: "unpaid", // payment at counter; admin marks paid when collected
+      paymentStatus: "unpaid",
+      paymentRequested: false,
       status: "pending",
-      notes: String(notes || ""),
+      notes,
     });
 
-    // try clearing server cart for this user if present
-    try {
-      if (req.userId) {
-        await userModel.findByIdAndUpdate(req.userId, { cartData: {} });
-      }
-    } catch (e) {
-      // ignore
+    if (!user.firstName || !user.lastName) {
+      const upd = {};
+      if (firstName?.trim()) upd.firstName = firstName.trim();
+      if (lastName?.trim()) upd.lastName = lastName.trim();
+      if (email?.trim()) upd.email = email.trim();
+      await userModel.findByIdAndUpdate(req.userId, upd, { new: true });
     }
 
-    // notify admin via websocket
+    if (usedServerCart) {
+      user.cartData = {};
+      await user.save();
+    }
+
     try {
-      const io = req.app && req.app.get && req.app.get("io");
-      if (io) io.emit("order.created", { orderType: "final", order });
+      const io = req.app.get("io");
+      io.emit("order.created", { order: orderDoc });
     } catch (e) {}
 
-    return res.json({ success: true, order, message: "Final order created" });
-  } catch (e) {
-    console.error("placeOrderCod error", e);
-    return res.status(500).json({ success: false, message: "Error placing final order" });
+    res.json({ success: true, order: orderDoc });
+  } catch (err) {
+    console.error("placeOrder error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
-/* ---------------- convert adhoc orders for a session into a final order ---------------- */
-/**
- * POST /api/order/adhoc-to-final
- * Body: { sessionId, payAll: boolean (optional) }
- *
- * Keeps adhoc orders as history, creates a new final order that merges items.
- * Marks adhoc orders as merged: true (keeps them in DB).
- */
-const convertAdhocToFinal = async (req, res) => {
+/* ============================================================
+   2) GET OUTSTANDING (USER)
+============================================================ */
+const getOutstanding = async (req, res) => {
   try {
-    const { sessionId, payAll = false } = req.body;
-    if (!sessionId) {
-      return res.status(400).json({ success: false, message: "sessionId required" });
-    }
+    const user = await requireUser(req, res);
+    if (!user) return;
 
-    // find adhoc orders for the session
-    const adhocOrders = await orderModel.find({ sessionId, orderType: "adhoc" }).sort({ createdAt: 1 }).lean();
-    if (!adhocOrders || adhocOrders.length === 0) {
-      return res.status(404).json({ success: false, message: "No adhoc orders found for this session" });
-    }
+    const unpaidOrders = await orderModel
+      .find({ userId: String(req.userId), paymentStatus: "unpaid" })
+      .sort({ createdAt: 1 })
+      .lean();
 
-    // aggregate items by itemId (sum quantities)
-    const agg = new Map();
-    for (const o of adhocOrders) {
-      for (const it of o.items || []) {
-        const key = String(it.itemId || it.name || JSON.stringify(it));
-        const existing = agg.get(key) || { itemId: it.itemId, name: it.name, price: it.price || 0, quantity: 0 };
-        existing.quantity = Number(existing.quantity || 0) + Number(it.quantity || 0);
-        agg.set(key, existing);
-      }
-    }
+    const total = unpaidOrders.reduce((s, o) => s + Number(o.amount || 0), 0);
 
-    const mergedItems = Array.from(agg.values()).map((v) => ({
-      itemId: v.itemId,
-      name: v.name,
-      price: Number(v.price || 0),
-      quantity: Number(v.quantity || 0),
-    }));
-
-    // compute total amount
-    const combinedAmount = mergedItems.reduce((s, it) => s + Number(it.price || 0) * Number(it.quantity || 0), 0);
-
-    const userId = adhocOrders[0].userId || `guest-${sessionId}`;
-
-    // create final order (paymentStatus depends on payAll flag; we default to unpaid at counter)
-    const finalOrder = await orderModel.create({
-      userId: String(userId),
-      firstName: adhocOrders[0].firstName || "",
-      lastName: adhocOrders[0].lastName || "",
-      email: adhocOrders[0].email || "",
-      tableNumber: adhocOrders[0].tableNumber || 0,
-      sessionId,
-      orderType: "final",
-      items: mergedItems,
-      amount: combinedAmount,
-      mergedSessionAmount: combinedAmount,
-      paymentStatus: payAll ? "paid" : "unpaid",
-      status: "pending",
-      notes: "Merged adhoc orders into final",
-    });
-
-    // mark adhoc orders as merged = true (keeps history)
-    await orderModel.updateMany({ sessionId, orderType: "adhoc" }, { $set: { merged: true } });
-
-    // emit event for admin
-    try {
-      const io = req.app && req.app.get && req.app.get("io");
-      if (io) io.emit("order.created", { orderType: "final", order: finalOrder });
-    } catch (e) {}
-
-    return res.json({ success: true, order: finalOrder });
-  } catch (e) {
-    console.error("convertAdhocToFinal error", e);
-    return res.status(500).json({ success: false, message: "Error converting adhoc orders" });
+    res.json({ success: true, orders: unpaidOrders, total });
+  } catch (err) {
+    console.error("getOutstanding error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
-/* ---------------- list with date filter (admin) ---------------- */
-/**
- * GET /api/order/list?from=YYYY-MM-DD&to=YYYY-MM-DD&status=&orderType=
- */
+/* ============================================================
+   3) REQUEST PAY (USER)
+============================================================ */
+const requestPay = async (req, res) => {
+  try {
+    const user = await requireUser(req, res);
+    if (!user) return;
+
+    const { orderIds = [], tableNumber = user.tableNumber || 0 } = req.body;
+
+    const q = { userId: String(req.userId), paymentStatus: "unpaid" };
+    if (Array.isArray(orderIds) && orderIds.length) {
+      q._id = { $in: orderIds.filter((id) => isMongoId(id)) };
+    }
+
+    const unpaid = await orderModel.find(q).lean();
+    if (!unpaid.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No unpaid orders to request payment for",
+      });
+    }
+
+    await orderModel.updateMany(
+      { _id: { $in: unpaid.map((o) => o._id) } },
+      { paymentRequested: true }
+    );
+
+    const updated = await orderModel
+      .find({ _id: { $in: unpaid.map((o) => o._id) } })
+      .lean();
+
+    const total = updated.reduce((s, o) => s + Number(o.amount || 0), 0);
+
+    try {
+      const io = req.app.get("io");
+      io.emit("order.payRequested", {
+        tableNumber,
+        orders: updated,
+        total,
+      });
+    } catch (e) {}
+
+    res.json({ success: true, orders: updated, total });
+  } catch (err) {
+    console.error("requestPay error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+/* ============================================================
+   4) MARK PAID (ADMIN)
+============================================================ */
+const markPaid = async (req, res) => {
+  try {
+    const { orderIds = [], userId } = req.body;
+
+    let updatedOrders = [];
+
+    if (Array.isArray(orderIds) && orderIds.length) {
+      const valid = orderIds.filter((id) => isMongoId(id));
+      await orderModel.updateMany(
+        { _id: { $in: valid } },
+        { paymentStatus: "paid", paymentRequested: false }
+      );
+      updatedOrders = await orderModel.find({ _id: { $in: valid } }).lean();
+    } else if (userId) {
+      await orderModel.updateMany(
+        { userId, paymentRequested: true },
+        { paymentStatus: "paid", paymentRequested: false }
+      );
+      updatedOrders = await orderModel
+        .find({ userId, paymentStatus: "paid" })
+        .lean();
+    } else {
+      return res
+        .status(400)
+        .json({ success: false, message: "Provide orderIds or userId" });
+    }
+
+    try {
+      const io = req.app.get("io");
+      io.emit("order.paid", { orders: updatedOrders });
+    } catch (e) {}
+
+    res.json({ success: true, orders: updatedOrders });
+  } catch (err) {
+    console.error("markPaid error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+/* ============================================================
+   5) LIST ORDERS (ADMIN — OPEN ACCESS)
+============================================================ */
 const listOrders = async (req, res) => {
   try {
-    const { from, to, status, orderType } = req.query;
+    const { from, to, paymentStatus, status } = req.query;
+
     const q = {};
+
+    if (paymentStatus) q.paymentStatus = paymentStatus;
+    if (status) q.status = status;
+
     if (from || to) {
       q.createdAt = {};
       if (from) q.createdAt.$gte = new Date(from);
       if (to) {
-        const t = new Date(to);
-        if (to.length <= 10) t.setHours(23, 59, 59, 999);
-        q.createdAt.$lte = t;
+        const d = new Date(to);
+        d.setHours(23, 59, 59, 999);
+        q.createdAt.$lte = d;
       }
     }
-    if (status) q.status = status;
-    if (orderType) q.orderType = orderType;
 
     const orders = await orderModel.find(q).sort({ createdAt: -1 }).lean();
-    return res.json({ success: true, orders });
-  } catch (e) {
-    console.error("listOrders error", e);
-    return res.status(500).json({ success: false, message: "Error" });
+
+    res.json({ success: true, orders });
+  } catch (err) {
+    console.error("listOrders error:", err);
+    res.status(500).json({ success: false, message: "Error listing orders" });
   }
 };
 
-/* ---------------- get orders for user ---------------- */
-/**
- * GET /api/order/user   (or POST depending on your route)
- * uses req.userId (auth middleware)
- */
+/* ============================================================
+   6) USER ORDERS (history)
+============================================================ */
 const userOrders = async (req, res) => {
   try {
-    const userId = req.userId || req.body?.userId || req.query?.userId;
-    if (!userId) return res.status(400).json({ success: false, message: "userId required" });
+    const user = await requireUser(req, res);
+    if (!user) return;
 
-    const orders = await orderModel.find({ userId }).sort({ createdAt: -1 }).lean();
-    return res.json({ success: true, orders });
-  } catch (e) {
-    console.error("userOrders error", e);
-    return res.status(500).json({ success: false, message: "Error" });
+    const orders = await orderModel
+      .find({ userId: String(req.userId) })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({ success: true, orders });
+  } catch (err) {
+    console.error("userOrders error:", err);
+    res.status(500).json({ success: false, message: "Error" });
   }
 };
 
-/* ---------------- update order status (admin) ---------------- */
-/**
- * POST /api/order/status
- * Body: { orderId, status, paymentStatus? }
- */
+/* ============================================================
+   7) UPDATE STATUS (ADMIN)
+============================================================ */
 const updateStatus = async (req, res) => {
   try {
     const { orderId, status, paymentStatus } = req.body;
-    if (!orderId || !isMongoId(orderId)) return res.status(400).json({ success: false, message: "orderId required" });
+
+    if (!orderId || !isMongoId(orderId))
+      return res
+        .status(400)
+        .json({ success: false, message: "Valid orderId required" });
 
     const update = {};
     if (status) update.status = status;
@@ -394,59 +338,78 @@ const updateStatus = async (req, res) => {
 
     await orderModel.findByIdAndUpdate(orderId, update);
 
-    // emit status update to admin / clients
     try {
-      const io = req.app && req.app.get && req.app.get("io");
-      if (io) io.emit("order.updated", { orderId, update });
+      const io = req.app.get("io");
+      io.emit("order.updated", { orderId, update });
     } catch (e) {}
 
-    return res.json({ success: true, message: "Status Updated" });
-  } catch (e) {
-    console.error("updateStatus error", e);
-    return res.status(500).json({ success: false, message: "Error" });
+    res.json({ success: true, message: "Status Updated" });
+  } catch (err) {
+    console.error("updateStatus error:", err);
+    res.status(500).json({ success: false, message: "Error" });
   }
 };
 
-/* ---------------- get single order by id ---------------- */
+/* ============================================================
+   8) GET ORDER BY ID
+============================================================ */
 const getOrderById = async (req, res) => {
   try {
-    const id = String(req.params.id || "");
-    if (!isMongoId(id)) {
-      return res.status(400).json({ success: false, message: "Invalid order id" });
-    }
+    const id = req.params.id;
+
+    if (!isMongoId(id))
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid order id" });
+
     const order = await orderModel.findById(id).lean();
-    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
-    return res.json({ success: true, order });
-  } catch (e) {
-    console.error("getOrderById error", e);
-    return res.status(500).json({ success: false, message: "Error" });
+    if (!order)
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
+
+    res.json({ success: true, order });
+  } catch (err) {
+    console.error("getOrderById error:", err);
+    res.status(500).json({ success: false, message: "Error" });
   }
 };
 
-/* ---------------- optional verifyOrder (kept for legacy Stripe flows) ---------------- */
 const verifyOrder = async (req, res) => {
-  // Body: { orderId, success }
-  const { orderId, success } = req.body;
   try {
-    if (!orderId) return res.status(400).json({ success: false, message: "orderId required" });
-    if (String(success) === "true" || success === true) {
-      await orderModel.findByIdAndUpdate(orderId, { paymentStatus: "paid" });
+    const { orderId, success } = req.body;
+
+    if (!orderId)
+      return res
+        .status(400)
+        .json({ success: false, message: "orderId required" });
+
+    if (success === true || String(success) === "true") {
+      await orderModel.findByIdAndUpdate(orderId, {
+        paymentStatus: "paid",
+        paymentRequested: false,
+      });
+
+      try {
+        const io = req.app.get("io");
+        io.emit("order.paid", { orders: [orderId] });
+      } catch (e) {}
+
       return res.json({ success: true, message: "Paid" });
-    } else {
-      // If a Stripe checkout was cancelled, you may want to delete the order
-      // but we keep it for audit by default.
-      return res.json({ success: false, message: "Not paid" });
     }
-  } catch (e) {
-    console.error("verifyOrder error", e);
-    return res.status(500).json({ success: false, message: "Not Verified" });
+
+    res.json({ success: false, message: "Not paid" });
+  } catch (err) {
+    console.error("verifyOrder error:", err);
+    res.status(500).json({ success: false, message: "Not Verified" });
   }
 };
 
 export {
-  placeOrderAdhoc,
-  placeOrderCod,
-  convertAdhocToFinal,
+  placeOrder,
+  getOutstanding,
+  requestPay,
+  markPaid,
   listOrders,
   userOrders,
   updateStatus,

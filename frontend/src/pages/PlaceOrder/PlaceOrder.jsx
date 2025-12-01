@@ -1,8 +1,17 @@
 // frontend/src/pages/PlaceOrder/PlaceOrder.jsx
+// ===============================================================
+// FINAL ORDER FLOW (NO ADHOC)
+// - Ask customer info only on FIRST order
+// - Auto-fetch user profile
+// - Hide name/email for repeat users
+// - Table number required every time
+// - Every order is unpaid until Pay Bill
+// ===============================================================
+
 import React, { useContext, useEffect, useMemo, useState } from "react";
 import "./PlaceOrder.css";
 import { StoreContext } from "../../Context/StoreContext";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import axios from "axios";
 
@@ -16,20 +25,17 @@ const PlaceOrder = () => {
     token,
     url,
     currency,
-    sessionId,
-    ensureSessionId,
   } = useContext(StoreContext);
 
   const navigate = useNavigate();
-  const location = useLocation();
 
-  // detect whether this page was opened as ?adhoc=1
-  const params = new URLSearchParams(location.search);
-  const isAdhoc = params.get("adhoc") === "1";
+  // -------------------------------------------------------------
+  // USER PROFILE (AUTO-LOADED)
+  // -------------------------------------------------------------
+  const [profile, setProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
 
-  // ------------------------------
-  // Customer Data (only needed for FINAL order)
-  // ------------------------------
+  // Only for FIRST ORDER
   const [data, setData] = useState({
     firstName: "",
     lastName: "",
@@ -37,14 +43,38 @@ const PlaceOrder = () => {
     tableNumber: "",
   });
 
-  const onChangeHandler = (event) => {
-    const { name, value } = event.target;
+  const onChangeHandler = (e) => {
+    const { name, value } = e.target;
     setData((prev) => ({ ...prev, [name]: value }));
   };
 
-  // ------------------------------
-  // Cart Snapshots and Totals
-  // ------------------------------
+  // -------------------------------------------------------------
+  // FETCH USER PROFILE
+  // -------------------------------------------------------------
+  useEffect(() => {
+    if (!token) return;
+
+    const loadProfile = async () => {
+      try {
+        const res = await axios.get(url + "/api/user/me", {
+          headers: { token },
+        });
+
+        if (res.data?.success) {
+          setProfile(res.data.user || null);
+        }
+      } catch (err) {
+        console.error("Profile load error:", err);
+      }
+      setLoadingProfile(false);
+    };
+
+    loadProfile();
+  }, [token]);
+
+  // -------------------------------------------------------------
+  // CART TOTALS
+  // -------------------------------------------------------------
   const clientCart = useMemo(
     () => buildClientCartSnapshot(),
     [buildClientCartSnapshot]
@@ -54,16 +84,14 @@ const PlaceOrder = () => {
   const cheeseTotal = useMemo(() => getAddOnTotal(), [getAddOnTotal]);
   const grandTotal = useMemo(() => getGrandTotal(), [getGrandTotal]);
 
-  // ------------------------------
+  // -------------------------------------------------------------
   // PLACE ORDER HANDLER
-  // ------------------------------
+  // -------------------------------------------------------------
   const placeOrder = async (e) => {
     e.preventDefault();
 
-    ensureSessionId(); // ensure grouping id exists
-
     if (!token) {
-      toast.error("Please sign in to place an order");
+      toast.error("Please sign in to place order");
       navigate("/cart");
       return;
     }
@@ -78,8 +106,14 @@ const PlaceOrder = () => {
       return;
     }
 
-    // FINAL ORDER requires name + last name
-    if (!isAdhoc) {
+    // Determine if customer info is missing → first order
+    const isFirstOrder =
+      !profile?.firstName ||
+      !profile?.lastName ||
+      profile.firstName.trim() === "" ||
+      profile.lastName.trim() === "";
+
+    if (isFirstOrder) {
       if (!data.firstName.trim() || !data.lastName.trim()) {
         toast.error("First name & last name are required");
         return;
@@ -87,113 +121,120 @@ const PlaceOrder = () => {
     }
 
     try {
-      // use backend fields
+      // Payload for backend
       const payload = {
-        firstName: data.firstName.trim(),
-        lastName: data.lastName.trim(),
-        email: (data.email || "").trim(),
+        firstName: isFirstOrder ? data.firstName.trim() : profile.firstName,
+        lastName: isFirstOrder ? data.lastName.trim() : profile.lastName,
+        email: isFirstOrder ? (data.email || "") : profile.email,
         tableNumber: Number(data.tableNumber),
         items: clientCart,
-        sessionId,
+        orderType: "order",
+        paymentStatus: "unpaid",
         notes: "",
       };
 
-      let endpoint = "";
-      if (isAdhoc) {
-        endpoint = "/api/order/placeadhoc";
-      } else {
-        endpoint = "/api/order/placecod";
-        payload.paymentMethod = "POC";
+      // Save profile FIRST TIME only
+      if (isFirstOrder) {
+        await axios.post(
+          url + "/api/user/update-profile",
+          {
+            firstName: payload.firstName,
+            lastName: payload.lastName,
+            email: payload.email,
+          },
+          { headers: { token } }
+        );
       }
 
-      const response = await axios.post(url + endpoint, payload, {
+      // Create order
+      const res = await axios.post(url + "/api/order/place", payload, {
         headers: { token },
-        validateStatus: () => true,
       });
 
-      // token expired case
-      if (response.status === 401) {
-        localStorage.removeItem("token");
-        toast.error("Session expired. Please login again.");
-        navigate("/cart");
-        return;
-      }
-
-      if (response.data?.success) {
-        // reset cart & addons
+      if (res.data?.success) {
+        toast.success("Order placed successfully!");
         await clearCart();
-
-        if (isAdhoc) {
-          toast.success("Adhoc order placed successfully!");
-          navigate("/myorders");
-        } else {
-          toast.success("Final order placed! Please pay on counter.");
-          navigate("/myorders");
-        }
+        navigate("/myorders");
       } else {
-        toast.error(response.data?.message || "Something went wrong");
+        toast.error(res.data?.message || "Could not place order");
       }
     } catch (err) {
-      console.error(err);
+      console.error("placeOrder error:", err);
       toast.error("Error placing order");
     }
   };
 
-  // ------------------------------
-  // Redirect if cart empty or not logged in
-  // ------------------------------
+  // -------------------------------------------------------------
+  // REDIRECTS
+  // -------------------------------------------------------------
   useEffect(() => {
-    if (!token) {
-      toast.error("Please sign in to place an order");
-      navigate("/cart");
-      return;
-    }
-    if (cartSubtotal <= 0) {
-      navigate("/cart");
-    }
+    if (!token) navigate("/cart");
+    if (cartSubtotal <= 0) navigate("/cart");
   }, [token, cartSubtotal, navigate]);
 
+  // -------------------------------------------------------------
+  // RENDER
+  // -------------------------------------------------------------
+  if (loadingProfile)
+    return <div className="place-order">Loading...</div>;
+
+  const isFirstOrder =
+    !profile?.firstName || !profile?.lastName;
+
   return (
-    <form onSubmit={placeOrder} className="place-order">
+    <form className="place-order" onSubmit={placeOrder}>
       {/* LEFT SIDE */}
       <div className="place-order-left">
-        <p className="title">
-          {isAdhoc ? "Adhoc Order (Quick Order)" : "Customer Info"}
-        </p>
+        <p className="title">Customer Info</p>
 
-        {/* FINAL ORDER → Ask for name & email */}
-        {!isAdhoc && (
+        {/* FIRST ORDER → ask all fields */}
+        {isFirstOrder && (
           <>
             <div className="multi-field">
               <input
                 type="text"
                 name="firstName"
+                placeholder="First name"
                 onChange={onChangeHandler}
                 value={data.firstName}
-                placeholder="First name"
-                required={!isAdhoc}
+                required
               />
+
               <input
                 type="text"
                 name="lastName"
+                placeholder="Last name"
                 onChange={onChangeHandler}
                 value={data.lastName}
-                placeholder="Last name"
-                required={!isAdhoc}
+                required
               />
             </div>
 
             <input
               type="email"
               name="email"
+              placeholder="Email (optional)"
               onChange={onChangeHandler}
               value={data.email}
-              placeholder="Email address (optional)"
             />
           </>
         )}
 
-        {/* TABLE NUMBER (required always) */}
+        {/* NEXT ORDERS → show saved info */}
+        {!isFirstOrder && (
+          <div className="existing-profile">
+            <p>
+              <b>Name:</b> {profile.firstName} {profile.lastName}
+            </p>
+            {profile.email && (
+              <p>
+                <b>Email:</b> {profile.email}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* TABLE NUMBER ALWAYS REQUIRED */}
         <div className="multi-field">
           <select
             name="tableNumber"
@@ -251,17 +292,16 @@ const PlaceOrder = () => {
           </div>
         </div>
 
-        {/* Payment always Pay on Counter */}
         <div className="payment">
           <h2>Payment Method</h2>
           <div className="payment-option active">
             <span className="dot">●</span>
-            <p>POC (Pay On Counter)</p>
+            <p>Pay on Counter</p>
           </div>
         </div>
 
         <button className="place-order-submit" type="submit">
-          {isAdhoc ? "Place Adhoc Order" : "Place Final Order"}
+          Place Order
         </button>
       </div>
     </form>

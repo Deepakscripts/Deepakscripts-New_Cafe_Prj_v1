@@ -3,25 +3,35 @@ import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema(
   {
-    name: { type: String },
+    // Primary identity
     phoneNumber: { type: String, required: true, unique: true },
 
-    // Local OTP flow fields
+    // Customer info (filled ONCE)
+    firstName: { type: String, default: "" },
+    lastName: { type: String, default: "" },
+    email: { type: String, default: "" },
+    tableNumber: { type: Number, default: 0 },
+
+    // Optional role: user / admin
+    role: { type: String, default: "user" },
+
+    // Server-side cart
+    cartData: { type: Object, default: {} },
+
+    // OTP fields (for future)
     otpHash: { type: String, select: false },
     otpExpiresAt: { type: Date, select: false },
     otpAttemptCount: { type: Number, default: 0, select: false },
     otpLastSentAt: { type: Date, select: false },
-
-    // leftover from experiments; not used in local flow
     otpSessionId: { type: String, select: false },
-
-    cartData: { type: Object, default: {} }
   },
   { minimize: false, timestamps: true }
 );
 
-// Ensure phoneNumber has a unique index
+// Unique index for phoneNumber
 userSchema.index({ phoneNumber: 1 }, { unique: true });
 
-const userModel = mongoose.models.user || mongoose.model("user", userSchema);
+const userModel =
+  mongoose.models.user || mongoose.model("user", userSchema);
+
 export default userModel;

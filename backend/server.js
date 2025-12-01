@@ -1,4 +1,12 @@
 // backend/server.js
+// ======================================================
+// CLEAN SERVER for NEW SIMPLIFIED WORKFLOW
+// - Strict login-only flow
+// - Updated CORS
+// - Updated Socket.IO events
+// - No guest/session headers
+// ======================================================
+
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -6,27 +14,31 @@ import http from "http";
 import { Server as SocketIOServer } from "socket.io";
 
 import { connectDB } from "./config/db.js";
+
+// ROUTES
 import userRouter from "./routes/userRoute.js";
 import foodRouter from "./routes/foodRoute.js";
 import cartRouter from "./routes/cartRoute.js";
 import orderRouter from "./routes/orderRoute.js";
 import smsRouter from "./routes/smsRoute.js";
-
-// NEW: analytics + dev seed routes
 import analyticsRouter from "./routes/analyticsRoute.js";
 
-// -------------------- APP CONFIG --------------------
+// ------------------------------------------------------
+// APP + ENV VALIDATION
+// ------------------------------------------------------
 const app = express();
 const port = process.env.PORT || 4000;
 
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 16) {
-  console.error("FATAL: JWT_SECRET is missing or too short. Add it to backend/.env");
+  console.error("❌ FATAL: JWT_SECRET missing or too short. Add it to backend/.env");
   process.exit(1);
 }
 
-// -------------------- CORS CONFIG --------------------
+// ------------------------------------------------------
+// CORS CONFIG
+// ------------------------------------------------------
 const defaultOrigins = [
-  "http://localhost:5173", // user frontend
+  "http://localhost:5173", // main frontend
   "http://localhost:5174", // admin frontend
   "http://127.0.0.1:5173",
   "http://127.0.0.1:5174",
@@ -47,20 +59,26 @@ app.use(
       return cb(new Error(`CORS blocked: ${origin}`));
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "token", "authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "token"], // removed user-session
     credentials: true,
   })
 );
 
 app.options("*", cors());
 
-// -------------------- BODY PARSER --------------------
+// ------------------------------------------------------
+// BODY PARSER
+// ------------------------------------------------------
 app.use(express.json());
 
-// -------------------- DATABASE ------------------------
+// ------------------------------------------------------
+// DATABASE
+// ------------------------------------------------------
 connectDB();
 
-// -------------------- ROUTES --------------------------
+// ------------------------------------------------------
+// ROUTES
+// ------------------------------------------------------
 app.use("/api/user", userRouter);
 app.use("/api/food", foodRouter);
 app.use("/images", express.static("uploads"));
@@ -69,12 +87,14 @@ app.use("/api/order", orderRouter);
 app.use("/api/sms", smsRouter);
 app.use("/api/analytics", analyticsRouter);
 
-// Root endpoint
+// Root check
 app.get("/", (_req, res) => {
   res.send("API Working");
 });
 
-// -------------------- HTTP + SOCKET.IO SERVER --------------------
+// ------------------------------------------------------
+// HTTP SERVER + SOCKET.IO
+// ------------------------------------------------------
 const server = http.createServer(app);
 
 const io = new SocketIOServer(server, {
@@ -85,24 +105,26 @@ const io = new SocketIOServer(server, {
   },
 });
 
-// Make io available in controllers
+// Make io accessible inside controllers
 app.set("io", io);
 
-// Handle admin & user socket connections
+// Handle socket events
 io.on("connection", (socket) => {
-  console.log("🔌 Socket connected:", socket.id);
+  console.log("🔌 Client connected:", socket.id);
 
   socket.on("disconnect", () => {
-    console.log("❌ Socket disconnected:", socket.id);
+    console.log("❌ Client disconnected:", socket.id);
   });
 });
 
-// -------------------- START SERVER --------------------
+// ------------------------------------------------------
+// START SERVER
+// ------------------------------------------------------
 const host = process.env.HOST || "0.0.0.0";
 
 server.listen(port, host, () => {
   const printableHost = host === "0.0.0.0" ? "localhost" : host;
   console.log(`🚀 Server running at http://${printableHost}:${port}`);
-  console.log("🌐 CORS allowed origins:", allowedOrigins.join(", "));
-  console.log("🔔 Socket.IO active!");
+  console.log("🌐 Allowed Origins:", allowedOrigins.join(", "));
+  console.log("🔔 Socket.IO ready");
 });

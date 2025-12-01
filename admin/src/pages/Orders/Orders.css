@@ -310,3 +310,45 @@
     min-width: 160px;
   }
 }
+
+/* Blinking highlight */
+.blink-highlight {
+  animation: blink 1s ease-out 0s 4;
+  border: 2px solid #ff4d00 !important;
+}
+
+@keyframes blink {
+  0% { background: #ffe1d6; }
+  50% { background: #ffd2c4; }
+  100% { background: white; }
+}
+
+/* Pay Request Modal */
+.pay-modal {
+  position: fixed;
+  inset: 0;
+  background: #0006;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.pay-modal-content {
+  background: white;
+  padding: 25px;
+  width: 380px;
+  border-radius: 10px;
+  box-shadow: 0 5px 20px #0003;
+  animation: fadeIn 0.3s ease;
+}
+
+.pm-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.pm-close {
+  background: #999;
+}

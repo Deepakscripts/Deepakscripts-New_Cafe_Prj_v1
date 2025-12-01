@@ -1,27 +1,36 @@
+/* ===========================================================
+   PLACE ORDER PAGE
+   Clean, responsive, final design for the new workflow
+=========================================================== */
+
 .place-order {
   display: flex;
-  align-items: start;
   justify-content: space-between;
+  align-items: flex-start;
   gap: 50px;
-  margin: 100px 0px;
+  margin: 100px 0;
 }
 
+/* -----------------------
+   LEFT PANEL
+----------------------- */
 .place-order-left {
   width: 100%;
-  max-width: max(30%, 500px);
+  max-width: 480px;
 }
 
 .place-order-left .title {
   font-size: 30px;
   font-weight: 600;
-  margin-bottom: 50px;
+  margin-bottom: 40px;
 }
 
 .place-order-left input,
 .place-order-left select {
-  margin-bottom: 15px;
   width: 100%;
-  padding: 10px;
+  padding: 12px;
+  font-size: 16px;
+  margin-bottom: 15px;
   border: 1px solid #c5c5c5;
   border-radius: 4px;
   outline-color: tomato;
@@ -30,55 +39,84 @@
 
 .place-order-left .multi-field {
   display: flex;
-  gap: 10px;
+  gap: 12px;
 }
 
+/* Existing saved customer info block */
+.existing-profile {
+  background: #fafafa;
+  border: 1px solid #e5e5e5;
+  padding: 15px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+}
+
+.existing-profile p {
+  margin-bottom: 8px;
+  font-size: 15px;
+}
+
+/* -----------------------
+   RIGHT PANEL
+----------------------- */
 .place-order-right {
   width: 100%;
-  max-width: max(40%, 500px);
+  max-width: 480px;
 }
 
 .cart-total h2 {
   margin-bottom: 16px;
+  font-size: 24px;
 }
 
 .cart-total-details {
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
   margin: 8px 0;
+  font-size: 16px;
 }
 
+/* Submit button */
 .place-order-submit {
   margin-top: 24px;
+  padding: 14px 32px;
   border: none;
+  border-radius: 4px;
   background-color: tomato;
   color: white;
-  padding: 12px 30px;
-  border-radius: 4px;
+  font-size: 17px;
   cursor: pointer;
+  transition: 0.2s;
 }
 
+.place-order-submit:hover {
+  opacity: 0.85;
+}
+
+/* -----------------------
+   Payment Section
+----------------------- */
 .payment {
+  margin-top: 30px;
   display: flex;
   flex-direction: column;
-  align-items: start;
   gap: 15px;
 }
 
 .payment h2 {
-  margin-top: 30px;
-  margin-bottom: 12px;
+  margin-bottom: 4px;
 }
 
 .payment .payment-option {
   display: flex;
   align-items: center;
   gap: 10px;
-  border: 1px solid tomato;
-  padding: 15px;
-  border-radius: 4px;
   min-width: 300px;
+  padding: 15px;
+  border: 1px solid tomato;
+  border-radius: 4px;
+  background: #fff;
 }
 
 .payment .payment-option.active {
@@ -91,8 +129,21 @@
   line-height: 1;
 }
 
+/* -----------------------
+   RESPONSIVE BEHAVIOR
+----------------------- */
 @media (max-width: 700px) {
   .place-order {
     flex-direction: column;
+    gap: 30px;
+  }
+
+  .place-order-left,
+  .place-order-right {
+    max-width: 100%;
+  }
+
+  .payment .payment-option {
+    width: 100%;
   }
 }

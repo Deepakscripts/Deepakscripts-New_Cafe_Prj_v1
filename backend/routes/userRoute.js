@@ -1,13 +1,16 @@
-// food-del/backend/routes/userRoute.js
 import express from "express";
-import { loginWithPhone, me } from "../controllers/userController.js";
+import authMiddleware from "../middleware/auth.js";   // ⭐ IMPORTANT
+import { loginWithPhone, getProfile, updateProfile, me } 
+  from "../controllers/userController.js";
 
 const router = express.Router();
 
-// Dev-only helper: direct phone login without OTP
 router.post("/login", loginWithPhone);
+router.get("/me", authMiddleware, getProfile);
 
-// Example "me" route
-router.get("/me", me);
+// ⭐ PROFILE UPDATE ROUTE (needed for PlaceOrder.jsx)
+router.post("/update-profile", authMiddleware, updateProfile);
+
+router.get("/verify", authMiddleware, me);
 
 export default router;

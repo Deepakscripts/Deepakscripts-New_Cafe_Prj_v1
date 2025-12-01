@@ -1,152 +1,194 @@
-import mongoose from "mongoose";
-import userModel from "../models/userModel.js";
+// backend/controllers/cartController.js
+// ===============================================
+//  NEW VERSION — LOGGED-IN USERS ONLY
+//  No guests, no sessionId, simplified cart flow
+// ===============================================
 
-/* ---------- helpers ---------- */
-const isMongoId = (v) => mongoose.Types.ObjectId.isValid(String(v || ""));
+import userModel from "../models/userModel.js";
+import foodModel from "../models/foodModel.js";
+
+/* ============================================================
+   HELPERS
+============================================================ */
 
 /**
- * Ensure we have a valid user document to operate on.
- * If userId is missing/invalid or the user doesn't exist, create a lightweight guest.
- * Returns the user doc (with cartData {}) and its _id.
+ * Always return a valid cart object
  */
-async function ensureUser(userId, seed = {}) {
-  try {
-    if (isMongoId(userId)) {
-      const existing = await userModel.findById(userId);
-      if (existing) return existing;
-    }
-    // create guest
-    const guest = await userModel.create({
-      firstName: String(seed.firstName || "Guest"),
-      lastName: String(seed.lastName || ""),
-      email: String(seed.email || "").trim(),
-      cartData: {},
-      role: "guest"
+const safeCart = (data) => (data && typeof data === "object" ? data : {});
+
+/**
+ * Require a logged-in user (authMiddleware sets req.userId)
+ */
+async function getAuthenticatedUser(req, res) {
+  if (!req.userId) {
+    res.status(401).json({
+      success: false,
+      message: "Unauthorized. Please login again.",
     });
-    return guest;
-  } catch (e) {
-    // as a last resort, create an empty guest
-    const guest = await userModel.create({ firstName: "Guest", cartData: {}, role: "guest" });
-    return guest;
+    return null;
   }
+
+  const user = await userModel.findById(req.userId);
+  if (!user) {
+    res.status(404).json({
+      success: false,
+      message: "User not found.",
+    });
+    return null;
+  }
+
+  return user;
 }
 
-/* ---------- controllers ---------- */
+/* ============================================================
+   ADD TO CART
+============================================================ */
 
-// add to user cart
-const addToCart = async (req, res) => {
+export async function addToCart(req, res) {
   try {
-    const { userId, itemId, firstName, lastName, email } = req.body;
-    const user = await ensureUser(userId, { firstName, lastName, email });
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
 
-    const cartData = user?.cartData || {};
+    const { itemId } = req.body;
+    if (!itemId)
+      return res.json({ success: false, message: "Item ID missing" });
+
+    const cartData = safeCart(user.cartData);
     const id = String(itemId);
 
     cartData[id] = (Number(cartData[id]) || 0) + 1;
 
-    const updated = await userModel.findByIdAndUpdate(
-      user._id,
-      { cartData },
-      { new: true }
-    );
+    user.cartData = cartData;
+    await user.save();
+
+    // Fetch item name for frontend toast
+    const item = await foodModel.findById(itemId).lean();
 
     res.json({
       success: true,
-      message: "Added To Cart",
-      userId: String(updated._id),
-      cartData: updated.cartData || {}
+      message: `${item?.name || "Item"} added to cart`,
+      itemName: item?.name || "",
+      quantity: cartData[id],
+      cartData,
     });
-  } catch (error) {
-    console.log(error);
-    res.json({ success: false, message: "Error" });
+  } catch (err) {
+    console.error("addToCart error:", err);
+    res.json({ success: false, message: "Server error" });
   }
-};
+}
 
-// remove food from user cart
-const removeFromCart = async (req, res) => {
+/* ============================================================
+   REMOVE FROM CART
+============================================================ */
+
+export async function removeFromCart(req, res) {
   try {
-    const { userId, itemId, firstName, lastName, email } = req.body;
-    const user = await ensureUser(userId, { firstName, lastName, email });
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
 
-    const cartData = user?.cartData || {};
+    const { itemId } = req.body;
+    if (!itemId)
+      return res.json({ success: false, message: "Item ID missing" });
+
+    const cartData = safeCart(user.cartData);
     const id = String(itemId);
 
-    if (Number(cartData[id]) > 0) {
-      cartData[id] = Number(cartData[id]) - 1;
+    if (cartData[id]) {
+      cartData[id]--;
       if (cartData[id] <= 0) delete cartData[id];
     }
 
-    const updated = await userModel.findByIdAndUpdate(
-      user._id,
-      { cartData },
-      { new: true }
-    );
+    // Fetch item name for toast
+    const item = await foodModel.findById(itemId).lean();
+
+    user.cartData = cartData;
+    await user.save();
 
     res.json({
       success: true,
-      message: "Removed From Cart",
-      userId: String(updated._id),
-      cartData: updated.cartData || {}
+      message: `${item?.name || "Item"} removed from cart`,
+      itemName: item?.name || "",
+      quantity: cartData[id] || 0,
+      cartData,
     });
-  } catch (error) {
-    console.log(error);
-    res.json({ success: false, message: "Error" });
+  } catch (err) {
+    console.error("removeFromCart error:", err);
+    res.json({ success: false, message: "Server error" });
   }
-};
+}
 
-// get user cart
-const getCart = async (req, res) => {
+/* ============================================================
+   GET CART
+============================================================ */
+
+export async function getCart(req, res) {
   try {
-    const { userId, firstName, lastName, email } = req.body;
-    const user = await ensureUser(userId, { firstName, lastName, email });
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
 
     res.json({
       success: true,
-      userId: String(user._id),
-      cartData: user?.cartData || {}
+      cartData: safeCart(user.cartData),
     });
-  } catch (error) {
-    console.log(error);
-    res.json({ success: false, message: "Error" });
+  } catch (err) {
+    console.error("getCart error:", err);
+    res.json({ success: false, message: "Server error" });
   }
-};
+}
 
-/**
- * Merge a client-provided cart map into the user's server cart.
- * Body: { userId, cart: { [itemId:string]: number } }
- * Returns: { success, cartData, userId }
- */
-const mergeCart = async (req, res) => {
+/* ============================================================
+   CLEAR CART
+============================================================ */
+
+export async function clearCart(req, res) {
   try {
-    const { userId, firstName, lastName, email } = req.body;
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    user.cartData = {};
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Cart cleared",
+      cartData: {},
+    });
+  } catch (err) {
+    console.error("clearCart error:", err);
+    res.json({ success: false, message: "Server error" });
+  }
+}
+
+/* ============================================================
+   MERGE CART — (OPTIONAL)  
+   You may remove this if not needed.
+   For login flow: merge local cart → user cart.
+============================================================ */
+
+export async function mergeCart(req, res) {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
     const incoming = req.body.cart || {};
-    const user = await ensureUser(userId, { firstName, lastName, email });
-
-    const current = user?.cartData || {};
+    const current = safeCart(user.cartData);
     const merged = { ...current };
 
-    for (const [rawId, rawQty] of Object.entries(incoming)) {
-      const id = String(rawId);
-      const qty = Math.max(0, Number(rawQty) || 0);
-      if (qty > 0) merged[id] = (merged[id] || 0) + qty;
+    for (const [id, qty] of Object.entries(incoming)) {
+      const q = Math.max(0, Number(qty) || 0);
+      if (q > 0) merged[id] = (merged[id] || 0) + q;
     }
 
-    const updated = await userModel.findByIdAndUpdate(
-      user._id,
-      { cartData: merged },
-      { new: true }
-    );
+    user.cartData = merged;
+    await user.save();
 
     res.json({
       success: true,
       message: "Cart merged",
-      userId: String(updated._id),
-      cartData: updated.cartData || {}
+      cartData: merged,
     });
-  } catch (error) {
-    console.log(error);
-    res.json({ success: false, message: "Error" });
+  } catch (err) {
+    console.error("mergeCart error:", err);
+    res.json({ success: false, message: "Server error" });
   }
-};
-
-export { addToCart, removeFromCart, getCart, mergeCart };
+}

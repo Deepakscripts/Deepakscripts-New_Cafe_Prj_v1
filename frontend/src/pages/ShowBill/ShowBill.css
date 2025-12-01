@@ -19,10 +19,10 @@
   background: #fff;
 }
 
-.adhoc-tag {
-  background: #ffb300;
+.unpaid-tag {
+  background: #ff4d4d;
   padding: 4px 8px;
-  color: #000;
+  color: #fff;
   font-size: 12px;
   border-radius: 4px;
 }
@@ -55,4 +55,14 @@
 .showbill-loading {
   padding: 3rem;
   text-align: center;
+}
+
+.showbill-empty button {
+  margin-top: 1rem;
+  padding: 0.6rem 1.6rem;
+  background: tomato;
+  color: #fff;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
 }

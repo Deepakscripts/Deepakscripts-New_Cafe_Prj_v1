@@ -1,59 +1,68 @@
 // backend/routes/orderRoute.js
+// ===============================================================
+// ORDER ROUTES - FINAL VERSION (User = JWT, Admin = OPEN ACCESS)
+// ===============================================================
+
 import express from "express";
-import authMiddleware from "../middleware/auth.js";
-import adminOnly from "../middleware/admin.js";
 
 import {
-  placeOrderAdhoc,
-  placeOrderCod,
-  convertAdhocToFinal,
+  placeOrder,
+  getOutstanding,
+  requestPay,
+  markPaid,
   listOrders,
   userOrders,
   updateStatus,
-  verifyOrder,
   getOrderById,
+  verifyOrder,
 } from "../controllers/orderController.js";
+
+import authMiddleware from "../middleware/auth.js";
 
 const orderRouter = express.Router();
 
-/* --------------------------------------------
- * ADMIN ROUTES
- * -------------------------------------------- */
+/* ============================================================
+   USER ROUTES (JWT REQUIRED)
+============================================================ */
 
-// List all orders (with date filter / type filter)
-orderRouter.get("/list", adminOnly, listOrders);
+// 🟩 User places order
+orderRouter.post("/place", authMiddleware, placeOrder);
 
-// Get single order (for printing or details)
-orderRouter.get("/:id", adminOnly, getOrderById);
+// 🟩 User unpaid orders summary
+orderRouter.get("/outstanding", authMiddleware, getOutstanding);
 
-// Update order status (pending → preparing → ready → served)
-orderRouter.post("/status", adminOnly, updateStatus);
+// 🟩 User requests bill
+orderRouter.post("/payrequest", authMiddleware, requestPay);
 
-
-/* --------------------------------------------
- * USER ROUTES
- * -------------------------------------------- */
-
-// Get orders for logged-in user
+// 🟩 List user's own orders
 orderRouter.get("/user", authMiddleware, userOrders);
-// (You were using POST earlier; now GET is cleaner.)
-// If you still need POST support, uncomment next line:
-// orderRouter.post("/userorders", authMiddleware, userOrders);
 
-// Place ADHOC order (quick order, customer will order more later)
-orderRouter.post("/placeadhoc", authMiddleware, placeOrderAdhoc);
+/* ============================================================
+   ADMIN ROUTES (NO AUTH REQUIRED)
+============================================================ */
 
-// Place FINAL order (Pay on Counter)
-orderRouter.post("/placecod", authMiddleware, placeOrderCod);
+// 🟥 Mark orders PAID — OPEN
+orderRouter.post("/markpaid", markPaid);
 
-// Convert all adhoc orders → final merged bill
-orderRouter.post("/adhoc-to-final", authMiddleware, convertAdhocToFinal);
+// 🟥 List all orders — OPEN
+orderRouter.get("/list-orders", listOrders);
 
+// Optional alias
+orderRouter.get("/list", listOrders);
 
-/* --------------------------------------------
- * OPTIONAL LEGACY VERIFY (Stripe, etc.)
- * -------------------------------------------- */
+// 🟥 Update order status — OPEN
+orderRouter.post("/updatestatus", updateStatus);
 
+/* ============================================================
+   OPTIONAL PAYMENT VERIFY
+============================================================ */
 orderRouter.post("/verify", verifyOrder);
+
+/* ============================================================
+   ⚠️ DYNAMIC ROUTE — MUST BE LAST
+============================================================ */
+
+// 🟩 Fetch one order (USER ONLY)
+orderRouter.get("/:id", authMiddleware, getOrderById);
 
 export default orderRouter;

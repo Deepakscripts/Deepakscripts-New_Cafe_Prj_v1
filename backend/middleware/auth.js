@@ -1,24 +1,32 @@
-// backend/middleware/auth.js
-// Global authentication middleware
-// Ensures req.userId is always available for logged-in users
+// backend/middleware/authMiddleware.js
+// =============================================================
+// CLEAN, STRICT AUTH MIDDLEWARE (NEW WORKFLOW)
+//
+// - Only logged-in users can access protected routes
+// - No guests, no sessionId fallback
+// - Extracts token strictly from Authorization / token header
+// - Verifies JWT → fetches user → attaches req.user & req.userId
+// =============================================================
 
 import jwt from "jsonwebtoken";
 import userModel from "../models/userModel.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
-  console.error("❌ ERROR: JWT_SECRET missing in backend/.env");
+  console.error("❌ ERROR: Missing JWT_SECRET in backend/.env");
   process.exit(1);
 }
 
 export default async function authMiddleware(req, res, next) {
   try {
-    // Accept token from multiple sources
-    let token =
-      req.headers?.token ||
-      req.headers?.authorization ||
-      req.query?.token ||
-      "";
+    let token = "";
+
+    // Prioritize Bearer tokens
+    if (req.headers.authorization?.startsWith("Bearer ")) {
+      token = req.headers.authorization.split(" ")[1];
+    } else if (req.headers.token) {
+      token = req.headers.token;
+    }
 
     if (!token) {
       return res.status(401).json({
@@ -27,12 +35,7 @@ export default async function authMiddleware(req, res, next) {
       });
     }
 
-    // Handle "Bearer <token>"
-    if (String(token).startsWith("Bearer ")) {
-      token = token.split(" ")[1];
-    }
-
-    // Verify token
+    // Decode token
     let decoded;
     try {
       decoded = jwt.verify(token, JWT_SECRET);
@@ -43,7 +46,6 @@ export default async function authMiddleware(req, res, next) {
       });
     }
 
-    // Extract userId from JWT payload
     const userId = decoded?.id || decoded?._id || decoded?.userId;
     if (!userId) {
       return res.status(401).json({
@@ -52,25 +54,19 @@ export default async function authMiddleware(req, res, next) {
       });
     }
 
-    // Try fetching user from DB for convenience
-    let userDoc = null;
-    try {
-      userDoc = await userModel.findById(userId).lean();
-    } catch (err) {
-      console.warn("⚠️ authMiddleware DB user fetch failed:", err.message);
-    }
-
-    if (!userDoc) {
+    // Fetch actual user record
+    const user = await userModel.findById(userId).lean();
+    if (!user) {
       return res.status(401).json({
         success: false,
-        message: "User does not exist",
+        message: "User not found",
       });
     }
 
-    // Attach user details on request for downstream routes
-    req.user = userDoc;
-    req.userId = String(userDoc._id);
-    req.userRole = userDoc.role || "user"; // supports future admin roles
+    // Attach user info for downstream controllers
+    req.user = user;
+    req.userId = String(user._id);
+    req.userRole = user.role || "user";
 
     return next();
   } catch (err) {
