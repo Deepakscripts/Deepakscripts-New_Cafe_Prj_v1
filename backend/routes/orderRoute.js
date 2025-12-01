@@ -15,6 +15,7 @@ import {
   updateStatus,
   getOrderById,
   verifyOrder,
+  listUserOrdersByDate,
 } from "../controllers/orderController.js";
 
 import authMiddleware from "../middleware/auth.js";
@@ -36,6 +37,9 @@ orderRouter.post("/payrequest", authMiddleware, requestPay);
 
 // 🟩 List user's own orders
 orderRouter.get("/user", authMiddleware, userOrders);
+
+// 🟩 List user's orders by date (filtered)
+orderRouter.get("/user/by-date", authMiddleware, listUserOrdersByDate);
 
 /* ============================================================
    ADMIN ROUTES (NO AUTH REQUIRED)

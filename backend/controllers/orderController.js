@@ -336,6 +336,54 @@ const userOrders = async (req, res) => {
 };
 
 /* ============================================================
+   LIST USER ORDERS BY DATE (filtered)
+   GET /api/order/user/by-date?from=YYYY-MM-DD&to=YYYY-MM-DD
+   Requires authMiddleware
+   Returns all orders for the user between start-of-from and end-of-to
+============================================================ */
+const listUserOrdersByDate = async (req, res) => {
+  try {
+    const user = await requireUser(req, res);
+    if (!user) return;
+
+    const { from, to } = req.query;
+
+    if (!from || !to) {
+      return res.status(400).json({
+        success: false,
+        message: "Both from and to dates are required (YYYY-MM-DD)",
+      });
+    }
+
+    const start = new Date(from);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(to);
+    end.setHours(23, 59, 59, 999);
+
+    const orders = await orderModel
+      .find({
+        userId: String(req.userId),
+        createdAt: { $gte: start, $lte: end },
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    return res.json({
+      success: true,
+      orders,
+    });
+  } catch (err) {
+    console.error("listUserOrdersByDate error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error fetching filtered orders",
+    });
+  }
+};
+
+
+/* ============================================================
    7) UPDATE STATUS (ADMIN)
 ============================================================ */
 const updateStatus = async (req, res) => {
@@ -430,4 +478,5 @@ export {
   updateStatus,
   verifyOrder,
   getOrderById,
+  listUserOrdersByDate,
 };

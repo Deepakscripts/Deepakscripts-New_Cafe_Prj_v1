@@ -1,9 +1,11 @@
 // frontend/src/App.jsx
 // ===============================================================
-// UPDATED FOR REAL-TIME SYNC WITH ADMIN + NEW WORKFLOW
-// - Global Socket.IO Connection
-// - OTP login mandatory
-// - Real-time updates for MyOrders, Bill, Cart, PlaceOrder
+// FIXED + OPTIMIZED
+// - Validated socket setup
+// - Prevent duplicate listeners
+// - Ensures LoginPopup works correctly
+// - Ensures Navbar + Footer rendering is stable
+// - Ready for real-time MyOrders sync
 // ===============================================================
 
 import React, { useContext, useEffect } from "react";
@@ -26,15 +28,15 @@ import "react-toastify/dist/ReactToastify.css";
 
 import { StoreContext } from "./Context/StoreContext";
 
-// ⭐ NEW: GLOBAL SOCKET.IO CLIENT
+// ⭐ GLOBAL SOCKET.IO CLIENT
 import { io } from "socket.io-client";
 
-// 👇 Create single socket instance (shared everywhere)
+// ⭐ Create ONLY ONE socket instance safely (NO DUPLICATES)
 export const socket = io(
   import.meta.env.VITE_API_URL || "http://localhost:4000",
   {
     transports: ["websocket"],
-    withCredentials: true,
+    withCredentials: true
   }
 );
 
@@ -42,7 +44,7 @@ const App = () => {
   const { token, isAuthReady } = useContext(StoreContext);
   const location = useLocation();
 
-  // Wait until authentication state is ready
+  // ⭐ If StoreContext is not ready, show loader
   if (!isAuthReady) {
     return (
       <div
@@ -59,14 +61,17 @@ const App = () => {
     );
   }
 
-  // ⭐ OPTIONAL: Log socket connection state for debugging
+  // ⭐ Debug Socket Connection Status
   useEffect(() => {
-    socket.on("connect", () => console.log("Socket connected:", socket.id));
-    socket.on("disconnect", () => console.log("Socket disconnected"));
+    const onConnect = () => console.log("Socket connected:", socket.id);
+    const onDisconnect = () => console.log("Socket disconnected");
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
 
     return () => {
-      socket.off("connect");
-      socket.off("disconnect");
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
     };
   }, []);
 
@@ -74,33 +79,36 @@ const App = () => {
     <>
       <ToastContainer />
 
-      {/* FORCE LOGIN — OTP must appear until user logs in */}
+      {/* ⭐ FORCE LOGIN until user has token */}
       {!token && isAuthReady && (
-        <LoginPopup setShowLogin={() => {}} forceLogin={true} />
+        <LoginPopup forceLogin={true} setShowLogin={() => {}} />
       )}
 
       <div className="app">
         <Navbar />
 
-        {/* ⭐ Routes now have REAL-TIME capability via global socket */}
         <Routes>
+          {/* MAIN ROUTES */}
           <Route path="/" element={<Home />} />
           <Route path="/about" element={<About />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
 
+          {/* CART + FINAL ORDER FLOW */}
           <Route path="/cart" element={<Cart />} />
           <Route path="/order" element={<PlaceOrder />} />
 
+          {/* REAL-TIME MyOrders */}
           <Route path="/myorders" element={<MyOrders />} />
 
+          {/* OTP VERIFY PAGE */}
           <Route path="/verify" element={<Verify />} />
 
-          {/* Fallback */}
+          {/* FALLBACK */}
           <Route path="*" element={<Home />} />
         </Routes>
       </div>
 
-      {/* Hide footer on OTP verification screen */}
+      {/* Hide footer on OTP verify page */}
       {location.pathname !== "/verify" && <Footer />}
     </>
   );

@@ -1,8 +1,6 @@
 // frontend/src/pages/MyOrders/MyOrders.jsx
 // ===============================================================
-// REAL-TIME ORDER HISTORY PAGE + OUTSTANDING BILL MODAL
-// - Syncs with Admin instantly via Socket.IO
-// - No page refresh needed
+// FINAL VERSION — REAL-TIME + DATE FILTER + BILL VIEWER
 // ===============================================================
 
 import React, { useContext, useEffect, useState } from "react";
@@ -12,12 +10,17 @@ import { StoreContext } from "../../Context/StoreContext";
 import { assets } from "../../assets/assets";
 import { toast } from "react-toastify";
 
-import OutstandingBillModal from "../../components/OutstandingBillModal/OutstandingBillModal";
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
 
-// ⭐ Import global socket instance
+import OutstandingBillModal from "../../components/OutstandingBillModal/OutstandingBillModal";
+import BillModal from "../../components/BillModal/BillModal";
+
 import { socket } from "../../App";
 
-// Status metadata
+// ---------------------------------------------------------------
+// STATUS MAP
+// ---------------------------------------------------------------
 const STATUS_META = {
   pending: { label: "Pending", color: "#f59e0b" },
   preparing: { label: "Preparing", color: "#ff7a00" },
@@ -31,38 +34,73 @@ const normalizeStatus = (raw) => {
   return STATUS_META[v] || STATUS_META.pending;
 };
 
+// ---------------------------------------------------------------
+// DATE HELPERS
+// ---------------------------------------------------------------
+const iso = (d) => {
+  if (!d) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+};
+
+const groupByDate = (orders) => {
+  const map = {};
+  for (const o of orders) {
+    const key = iso(new Date(o.createdAt));
+    if (!map[key]) map[key] = [];
+    map[key].push(o);
+  }
+
+  return Object.keys(map)
+    .sort((a, b) => new Date(b) - new Date(a))
+    .map((date) => ({ date, orders: map[date] }));
+};
+
+// ---------------------------------------------------------------
+// MAIN COMPONENT
+// ---------------------------------------------------------------
 const MyOrders = () => {
-  const [orders, setOrders] = useState([]);
-  const [loadingId, setLoadingId] = useState(null);
+  const { url, token, currency } = useContext(StoreContext);
+
+  const [from, setFrom] = useState(new Date());
+  const [to, setTo] = useState(new Date());
+
+  const [grouped, setGrouped] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   const [unpaidOrders, setUnpaidOrders] = useState([]);
   const [totalUnpaid, setTotalUnpaid] = useState(0);
-  const [showBillModal, setShowBillModal] = useState(false);
+  const [showOutstandingModal, setShowOutstandingModal] = useState(false);
 
-  const { url, token, currency } = useContext(StoreContext);
+  const [showBillModal, setShowBillModal] = useState(null); // {date, orders}
 
   // ---------------------------------------------------------------
-  // FETCH ORDERS
+  // FETCH ORDERS (DATE-WISE)
   // ---------------------------------------------------------------
   const fetchOrders = async () => {
     try {
-      const res = await axios.get(`${url}/api/order/user`, {
-        headers: { token },
-      });
+      setLoading(true);
+
+      const res = await axios.get(
+        `${url}/api/order/user/by-date?from=${iso(from)}&to=${iso(to)}`,
+        { headers: { token } }
+      );
 
       if (res.data?.success) {
-        setOrders(res.data.orders || []);
-      } else {
-        toast.error("Unable to load orders");
+        setGrouped(groupByDate(res.data.orders || []));
       }
     } catch (err) {
       console.error(err);
       toast.error("Failed to load orders");
+    } finally {
+      setLoading(false);
     }
   };
 
   // ---------------------------------------------------------------
-  // FETCH OUTSTANDING BILL
+  // FETCH OUTSTANDING
   // ---------------------------------------------------------------
   const fetchOutstanding = async () => {
     try {
@@ -71,13 +109,11 @@ const MyOrders = () => {
       });
 
       if (res.data?.success) {
-        const list = res.data.orders || [];
-        setUnpaidOrders(list);
-        const total = list.reduce(
-          (sum, o) => sum + Number(o.amount || 0),
-          0
+        const orders = res.data.orders || [];
+        setUnpaidOrders(orders);
+        setTotalUnpaid(
+          orders.reduce((s, o) => s + Number(o.amount || 0), 0)
         );
-        setTotalUnpaid(total);
       }
     } catch (err) {
       console.error(err);
@@ -85,38 +121,29 @@ const MyOrders = () => {
   };
 
   // ---------------------------------------------------------------
-  // TRACK ORDER BUTTON
+  // REQUEST BILL FOR OUTSTANDING ORDERS
   // ---------------------------------------------------------------
-  const trackOrder = async (orderId) => {
-    setLoadingId(orderId);
-    await fetchOrders();
-    setLoadingId(null);
-  };
-
-  // ---------------------------------------------------------------
-  // PAY BILL REQUEST
-  // ---------------------------------------------------------------
-  const handlePayBill = async () => {
+  const handleOutstandingPayment = async () => {
     try {
-      const unpaidIds = unpaidOrders.map((o) => o._id);
+      const ids = unpaidOrders.map((o) => o._id);
 
-      if (unpaidIds.length === 0) {
-        toast.info("No unpaid orders!");
+      if (!ids.length) {
+        toast.info("No unpaid orders");
         return;
       }
 
       const res = await axios.post(
         `${url}/api/order/payrequest`,
-        { orderIds: unpaidIds },
+        { orderIds: ids },
         { headers: { token } }
       );
 
       if (res.data?.success) {
-        toast.success("Payment request sent to admin!");
-        setShowBillModal(false);
+        toast.success("Payment request sent!");
+        setShowOutstandingModal(false);
         fetchOutstanding();
       } else {
-        toast.error(res.data?.message || "Could not request bill");
+        toast.error(res.data?.message || "Could not request payment");
       }
     } catch (err) {
       console.error(err);
@@ -135,40 +162,30 @@ const MyOrders = () => {
   }, [token]);
 
   // ---------------------------------------------------------------
-  // ⭐ REAL-TIME SOCKET LISTENERS
+  // REAL-TIME SOCKET UPDATES
   // ---------------------------------------------------------------
   useEffect(() => {
     if (!token) return;
 
-    // New order created (by user or admin)
-    socket.on("order.created", () => {
+    const refresh = () => {
       fetchOrders();
       fetchOutstanding();
-    });
+    };
 
-    // Status changed: pending -> preparing -> served
-    socket.on("order.updated", (payload) => {
-      fetchOrders();
-    });
+    socket.on("order.created", refresh);
+    socket.on("order.updated", refresh);
+    socket.on("order.payRequested", refresh);
 
-    // When admin marks paid → pending amount becomes 0 instantly
     socket.on("order.paid", () => {
-      fetchOrders();
-      fetchOutstanding();
       toast.success("Your bill has been paid!");
-    });
-
-    // When admin sees bill request OR user requests again
-    socket.on("order.payRequested", () => {
-      fetchOutstanding();
-      toast.info("Bill request sent!");
+      refresh();
     });
 
     return () => {
-      socket.off("order.created");
-      socket.off("order.updated");
-      socket.off("order.paid");
-      socket.off("order.payRequested");
+      socket.off("order.created", refresh);
+      socket.off("order.updated", refresh);
+      socket.off("order.payRequested", refresh);
+      socket.off("order.paid", refresh);
     };
   }, [token]);
 
@@ -176,82 +193,153 @@ const MyOrders = () => {
   // RENDER
   // ---------------------------------------------------------------
   return (
-    <div className="my-orders">
+    <div className="my-orders-page container">
+
       <h2>My Orders</h2>
 
-      {/* Outstanding Bill Summary */}
-      {unpaidOrders.length > 0 && (
-        <div className="bill-summary">
-          <h3>
-            Pending Amount: {currency}
-            {totalUnpaid}
-          </h3>
-
-          <button
-            className="paybill-btn"
-            onClick={() => setShowBillModal(true)}
-          >
-            View / Pay Bill
-          </button>
+      {/* ------------------ FILTER ROW ------------------ */}
+      <div className="filter-row">
+        <div>
+          <label>From</label>
+          <DatePicker
+            selected={from}
+            onChange={(d) => setFrom(d)}
+            className="date-input"
+            dateFormat="dd-MM-yyyy"
+          />
         </div>
-      )}
 
-      {/* Orders List */}
-      <div className="container">
-        {orders.map((order) => {
-          const items = order.items || [];
-          const itemsText =
-            items.length === 0
-              ? "No items"
-              : items
-                  .map(
-                    (item) =>
-                      `${item?.name || "Item"} x ${item?.quantity || 0}`
-                  )
-                  .join(", ");
+        <div>
+          <label>To</label>
+          <DatePicker
+            selected={to}
+            onChange={(d) => setTo(d)}
+            className="date-input"
+            dateFormat="dd-MM-yyyy"
+          />
+        </div>
 
-          const { label, color } = normalizeStatus(order.status);
-          const amount = Number(order.amount || 0).toFixed(2);
+        <button className="filter-btn" onClick={fetchOrders}>
+          Filter
+        </button>
+
+        {totalUnpaid > 0 && (
+          <div className="outstanding-box">
+            <p>
+              Pending Amount: {currency}
+              {totalUnpaid}
+            </p>
+
+            <button
+              className="paybill-btn"
+              onClick={() => setShowOutstandingModal(true)}
+            >
+              View / Pay Bill
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ------------------ ORDERS ------------------ */}
+      {loading && <p>Loading…</p>}
+
+      <div className="orders-by-date">
+        {!loading && grouped.length === 0 && (
+          <p>No orders found for this date range.</p>
+        )}
+
+        {grouped.map(({ date, orders }) => {
+          const totalForDate = orders.reduce(
+            (s, o) => s + Number(o.amount || 0),
+            0
+          );
 
           return (
-            <div key={order._id} className="my-orders-order">
-              <img src={assets.parcel_icon} alt="" />
+            <div className="day-block" key={date}>
+              <div className="day-header">
+                <div>
+                  <h3>{new Date(date).toLocaleDateString()}</h3>
+                  <p className="small">Orders: {orders.length}</p>
+                </div>
 
-              <p className="items-line">{itemsText}</p>
+                <div className="day-actions">
+                  <p>
+                    Total: {currency}
+                    {totalForDate}
+                  </p>
+                  <button
+                    className="viewbill-btn"
+                    onClick={() => setShowBillModal({ date, orders })}
+                  >
+                    View Bill
+                  </button>
+                </div>
+              </div>
 
-              <p className="amount">
-                {currency}
-                {amount}
-              </p>
+              <div className="day-orders-list">
+                {orders.map((o) => {
+                  const itemsText = (o.items || [])
+                    .map((i) => `${i.name} x ${i.quantity}`)
+                    .join(", ");
 
-              <p className="count">Items: {items.length}</p>
+                  const { label, color } = normalizeStatus(o.status);
 
-              <p className="status">
-                <span className="status-dot" style={{ background: color }} />
-                <b className="status-label">{label}</b>
-              </p>
+                  return (
+                    <div key={o._id} className="order-row">
+                      <div className="left">
+                        <img src={assets.parcel_icon} alt="" />
+                        <div>
+                          <div className="items-line">{itemsText}</div>
+                          <p className="small">
+                            Table: {o.tableNumber || "-"}
+                          </p>
+                        </div>
+                      </div>
 
-              <button
-                onClick={() => trackOrder(order._id)}
-                disabled={loadingId === order._id}
-                className={loadingId === order._id ? "loading" : ""}
-              >
-                {loadingId === order._id ? "Updating…" : "Track Order"}
-              </button>
+                      <div className="right">
+                        <p className="amount">
+                          {currency}
+                          {Number(o.amount || 0).toFixed(2)}
+                        </p>
+
+                        <div className="status">
+                          <span
+                            className="status-dot"
+                            style={{ background: color }}
+                          />
+                          <span className="status-label">{label}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           );
         })}
       </div>
 
-      {/* Outstanding Bill Modal */}
+      {/* ------------------ OUTSTANDING BILL MODAL ------------------ */}
       <OutstandingBillModal
-        visible={showBillModal}
-        onClose={() => setShowBillModal(false)}
+        visible={showOutstandingModal}
+        onClose={() => setShowOutstandingModal(false)}
         outstandingOrders={unpaidOrders}
         total={totalUnpaid}
         currency={currency}
-        onConfirmPay={handlePayBill}
+        onConfirmPay={handleOutstandingPayment}
       />
+
+      {/* ------------------ DATE BILL MODAL ------------------ */}
+      {showBillModal && (
+        <BillModal
+          visible={true}
+          onClose={() => setShowBillModal(null)}
+          dateKey={showBillModal.date}
+          ordersForDate={showBillModal.orders}
+          currency={currency}
+          onConfirmPay={null}
+        />
+      )}
     </div>
   );
 };
