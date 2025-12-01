@@ -146,7 +146,7 @@ const placeOrder = async (req, res) => {
     try {
       const io = req.app.get("io");
       io.emit("order.created", { order: orderDoc });
-    } catch (e) {}
+    } catch (e) { }
 
     res.json({ success: true, order: orderDoc });
   } catch (err) {
@@ -185,14 +185,12 @@ const requestPay = async (req, res) => {
     const user = await requireUser(req, res);
     if (!user) return;
 
-    const { orderIds = [], tableNumber = user.tableNumber || 0 } = req.body;
+    // 1. Find all unpaid orders for this user
+    let unpaid = await orderModel
+      .find({ userId: String(req.userId), paymentStatus: "unpaid" })
+      .sort({ createdAt: -1 }) // latest order first
+      .lean();
 
-    const q = { userId: String(req.userId), paymentStatus: "unpaid" };
-    if (Array.isArray(orderIds) && orderIds.length) {
-      q._id = { $in: orderIds.filter((id) => isMongoId(id)) };
-    }
-
-    const unpaid = await orderModel.find(q).lean();
     if (!unpaid.length) {
       return res.status(400).json({
         success: false,
@@ -200,32 +198,49 @@ const requestPay = async (req, res) => {
       });
     }
 
+    // 2. The table number MUST come from the most recent order
+    const latestOrder = unpaid[0];
+    const tableNumber = latestOrder.tableNumber || 0;
+
+    // 3. Mark all unpaid orders as paymentRequested
+    const orderIdsToUpdate = unpaid.map((o) => o._id);
+
     await orderModel.updateMany(
-      { _id: { $in: unpaid.map((o) => o._id) } },
+      { _id: { $in: orderIdsToUpdate } },
       { paymentRequested: true }
     );
 
+    // 4. Fetch updated docs
     const updated = await orderModel
-      .find({ _id: { $in: unpaid.map((o) => o._id) } })
+      .find({ _id: { $in: orderIdsToUpdate } })
       .lean();
 
     const total = updated.reduce((s, o) => s + Number(o.amount || 0), 0);
 
+    // 5. Emit socket event to admin
     try {
       const io = req.app.get("io");
       io.emit("order.payRequested", {
-        tableNumber,
+        userId: String(req.userId),
+        tableNumber,   // ⭐ CORRECT TABLE NUMBER HERE
         orders: updated,
         total,
       });
-    } catch (e) {}
+    } catch (e) { }
 
-    res.json({ success: true, orders: updated, total });
+    res.json({
+      success: true,
+      orders: updated,
+      total,
+      tableNumber,
+      message: "Pay request sent to admin",
+    });
   } catch (err) {
     console.error("requestPay error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
+
 
 /* ============================================================
    4) MARK PAID (ADMIN)
@@ -260,7 +275,7 @@ const markPaid = async (req, res) => {
     try {
       const io = req.app.get("io");
       io.emit("order.paid", { orders: updatedOrders });
-    } catch (e) {}
+    } catch (e) { }
 
     res.json({ success: true, orders: updatedOrders });
   } catch (err) {
@@ -341,7 +356,7 @@ const updateStatus = async (req, res) => {
     try {
       const io = req.app.get("io");
       io.emit("order.updated", { orderId, update });
-    } catch (e) {}
+    } catch (e) { }
 
     res.json({ success: true, message: "Status Updated" });
   } catch (err) {
@@ -393,7 +408,7 @@ const verifyOrder = async (req, res) => {
       try {
         const io = req.app.get("io");
         io.emit("order.paid", { orders: [orderId] });
-      } catch (e) {}
+      } catch (e) { }
 
       return res.json({ success: true, message: "Paid" });
     }
