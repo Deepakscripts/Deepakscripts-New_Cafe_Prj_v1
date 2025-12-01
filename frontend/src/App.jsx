@@ -1,12 +1,12 @@
 // frontend/src/App.jsx
 // ===============================================================
-// UPDATED FOR NEW WORKFLOW (NO SHOW-BILL, NO ADHOC)
+// UPDATED FOR REAL-TIME SYNC WITH ADMIN + NEW WORKFLOW
+// - Global Socket.IO Connection
 // - OTP login mandatory
-// - Users place only FINAL orders
-// - MyOrders shows pending + order history
+// - Real-time updates for MyOrders, Bill, Cart, PlaceOrder
 // ===============================================================
 
-import React, { useContext } from "react";
+import React, { useContext, useEffect } from "react";
 import { Route, Routes, useLocation } from "react-router-dom";
 
 import Home from "./pages/Home/Home";
@@ -26,11 +26,23 @@ import "react-toastify/dist/ReactToastify.css";
 
 import { StoreContext } from "./Context/StoreContext";
 
+// ⭐ NEW: GLOBAL SOCKET.IO CLIENT
+import { io } from "socket.io-client";
+
+// 👇 Create single socket instance (shared everywhere)
+export const socket = io(
+  import.meta.env.VITE_API_URL || "http://localhost:4000",
+  {
+    transports: ["websocket"],
+    withCredentials: true,
+  }
+);
+
 const App = () => {
   const { token, isAuthReady } = useContext(StoreContext);
   const location = useLocation();
 
-  // Wait for authentication + profile load
+  // Wait until authentication state is ready
   if (!isAuthReady) {
     return (
       <div
@@ -47,6 +59,17 @@ const App = () => {
     );
   }
 
+  // ⭐ OPTIONAL: Log socket connection state for debugging
+  useEffect(() => {
+    socket.on("connect", () => console.log("Socket connected:", socket.id));
+    socket.on("disconnect", () => console.log("Socket disconnected"));
+
+    return () => {
+      socket.off("connect");
+      socket.off("disconnect");
+    };
+  }, []);
+
   return (
     <>
       <ToastContainer />
@@ -59,23 +82,20 @@ const App = () => {
       <div className="app">
         <Navbar />
 
+        {/* ⭐ Routes now have REAL-TIME capability via global socket */}
         <Routes>
-          {/* MAIN ROUTES */}
           <Route path="/" element={<Home />} />
           <Route path="/about" element={<About />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
 
-          {/* CART + FINAL ORDER FLOW ONLY */}
           <Route path="/cart" element={<Cart />} />
           <Route path="/order" element={<PlaceOrder />} />
 
-          {/* USER ORDER HISTORY */}
           <Route path="/myorders" element={<MyOrders />} />
 
-          {/* OTP VERIFY PAGE */}
           <Route path="/verify" element={<Verify />} />
 
-          {/* FALLBACK */}
+          {/* Fallback */}
           <Route path="*" element={<Home />} />
         </Routes>
       </div>

@@ -1,10 +1,10 @@
 // frontend/src/pages/ShowBill/ShowBill.jsx
 // ===============================================================
-// SHOW BILL (NEW WORKFLOW)
-// - Fetch all unpaid orders for logged-in user
-// - Show combined bill
-// - User clicks "Request Payment"
-// - Admin receives socket notification
+// SHOW BILL (REAL-TIME VERSION)
+// - Auto-updates when admin marks paid
+// - Auto-updates when new orders come in
+// - Auto-updates on status updates & bill requests
+// - No refresh required
 // ===============================================================
 
 import React, { useContext, useEffect, useState } from "react";
@@ -13,6 +13,9 @@ import axios from "axios";
 import { StoreContext } from "../../Context/StoreContext";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
+
+// ⭐ Import socket instance (same as MyOrders)
+import { socket } from "../../App";
 
 const ShowBill = () => {
   const { token, url } = useContext(StoreContext);
@@ -24,7 +27,39 @@ const ShowBill = () => {
   const navigate = useNavigate();
 
   /* ---------------------------------------------------
-     LOAD OUTSTANDING ORDERS (paymentStatus = unpaid)
+     LOAD OUTSTANDING ORDERS (unpaid only)
+  --------------------------------------------------- */
+  const fetchOutstanding = async () => {
+    try {
+      setLoading(true);
+
+      const res = await axios.get(`${url}/api/order/outstanding`, {
+        headers: { token },
+      });
+
+      if (res.data?.success) {
+        const list = res.data.orders || [];
+        setOrders(list);
+        setTotal(res.data.total || 0);
+
+        // If admin marks paid → bill becomes empty → redirect user
+        if (list.length === 0) {
+          toast.success("Your bill has been paid!");
+          navigate("/myorders");
+        }
+      } else {
+        toast.error("Failed to load bill");
+      }
+    } catch (err) {
+      console.error("ShowBill error:", err);
+      toast.error("Failed to load bill");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* ---------------------------------------------------
+     INITIAL LOAD
   --------------------------------------------------- */
   useEffect(() => {
     if (!token) {
@@ -33,39 +68,51 @@ const ShowBill = () => {
       return;
     }
 
-    const fetchOutstanding = async () => {
-      try {
-        setLoading(true);
-        const res = await axios.get(url + "/api/order/outstanding", {
-          headers: { token },
-        });
-
-        if (res.data?.success) {
-          const list = res.data.orders || [];
-          setOrders(list);
-          setTotal(res.data.total || 0);
-        } else {
-          toast.error("Failed to load bill");
-        }
-      } catch (err) {
-        console.error("ShowBill error:", err);
-        toast.error("Failed to load bill");
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchOutstanding();
-  }, [token, url, navigate]);
+  }, [token]);
+
+  /* ---------------------------------------------------
+     REAL-TIME SOCKET SYNC (live updates)
+  --------------------------------------------------- */
+  useEffect(() => {
+    if (!token) return;
+
+    // New order created → recheck unpaid bill in case user adds new order
+    socket.on("order.created", () => {
+      fetchOutstanding();
+    });
+
+    // Status updated → may affect bill screen (but mostly admin side)
+    socket.on("order.updated", () => {
+      fetchOutstanding();
+    });
+
+    // Bill requested (by same user or admin acknowledges)
+    socket.on("order.payRequested", () => {
+      fetchOutstanding();
+    });
+
+    // ADMIN MARKS PAID → close this screen immediately
+    socket.on("order.paid", () => {
+      toast.success("Your bill has been paid!");
+      fetchOutstanding();
+    });
+
+    return () => {
+      socket.off("order.created");
+      socket.off("order.updated");
+      socket.off("order.payRequested");
+      socket.off("order.paid");
+    };
+  }, [token]);
 
   /* ---------------------------------------------------
      REQUEST PAYMENT
-     (Marks all unpaid orders as paymentRequested = true)
   --------------------------------------------------- */
   const handleRequestPayment = async () => {
     try {
       const res = await axios.post(
-        url + "/api/order/payrequest",
+        `${url}/api/order/payrequest`,
         {},
         { headers: { token } }
       );
@@ -96,7 +143,7 @@ const ShowBill = () => {
     return (
       <div className="showbill-empty">
         <h2>No pending bills</h2>
-        <button onClick={() => navigate("/")}>Go Back</button>
+        <button onClick={() => navigate("/myorders")}>Back</button>
       </div>
     );
 
@@ -108,14 +155,14 @@ const ShowBill = () => {
       <h2>Your Pending Bill</h2>
 
       <div className="showbill-orders">
-        {orders.map((order, i) => (
+        {orders.map((order, index) => (
           <div key={order._id} className="showbill-card">
-            <h4>Order {i + 1}</h4>
+            <h4>Order {index + 1}</h4>
 
             <p><b>Items:</b></p>
             <ul>
-              {order.items.map((item, idx) => (
-                <li key={idx}>
+              {order.items.map((item, i) => (
+                <li key={i}>
                   {item.name} × {item.quantity} — ₹
                   {Number(item.price) * Number(item.quantity)}
                 </li>
@@ -123,10 +170,7 @@ const ShowBill = () => {
             </ul>
 
             <p><b>Subtotal:</b> ₹{order.amount}</p>
-
-            <p>
-              <span className="unpaid-tag">Unpaid</span>
-            </p>
+            <p><span className="unpaid-tag">Unpaid</span></p>
           </div>
         ))}
       </div>

@@ -1,9 +1,8 @@
 // frontend/src/pages/MyOrders/MyOrders.jsx
 // ===============================================================
-// NEW ORDER HISTORY PAGE + OUTSTANDING BILL MODAL
-// - Works with new backend /api/order/user & /outstanding
-// - Shows all orders for logged-in user
-// - Outstanding Bill Modal replaces ShowBill page
+// REAL-TIME ORDER HISTORY PAGE + OUTSTANDING BILL MODAL
+// - Syncs with Admin instantly via Socket.IO
+// - No page refresh needed
 // ===============================================================
 
 import React, { useContext, useEffect, useState } from "react";
@@ -15,8 +14,10 @@ import { toast } from "react-toastify";
 
 import OutstandingBillModal from "../../components/OutstandingBillModal/OutstandingBillModal";
 
+// ⭐ Import global socket instance
+import { socket } from "../../App";
 
-// Allowed statuses
+// Status metadata
 const STATUS_META = {
   pending: { label: "Pending", color: "#f59e0b" },
   preparing: { label: "Preparing", color: "#ff7a00" },
@@ -34,7 +35,6 @@ const MyOrders = () => {
   const [orders, setOrders] = useState([]);
   const [loadingId, setLoadingId] = useState(null);
 
-  // Outstanding bill
   const [unpaidOrders, setUnpaidOrders] = useState([]);
   const [totalUnpaid, setTotalUnpaid] = useState(0);
   const [showBillModal, setShowBillModal] = useState(false);
@@ -85,7 +85,7 @@ const MyOrders = () => {
   };
 
   // ---------------------------------------------------------------
-  // TRACK ORDER
+  // TRACK ORDER BUTTON
   // ---------------------------------------------------------------
   const trackOrder = async (orderId) => {
     setLoadingId(orderId);
@@ -94,7 +94,7 @@ const MyOrders = () => {
   };
 
   // ---------------------------------------------------------------
-  // PAY BILL
+  // PAY BILL REQUEST
   // ---------------------------------------------------------------
   const handlePayBill = async () => {
     try {
@@ -114,7 +114,7 @@ const MyOrders = () => {
       if (res.data?.success) {
         toast.success("Payment request sent to admin!");
         setShowBillModal(false);
-        await fetchOutstanding();
+        fetchOutstanding();
       } else {
         toast.error(res.data?.message || "Could not request bill");
       }
@@ -125,7 +125,7 @@ const MyOrders = () => {
   };
 
   // ---------------------------------------------------------------
-  // LOAD ORDERS + OUTSTANDING BILL
+  // INITIAL LOAD
   // ---------------------------------------------------------------
   useEffect(() => {
     if (token) {
@@ -134,11 +134,52 @@ const MyOrders = () => {
     }
   }, [token]);
 
+  // ---------------------------------------------------------------
+  // ⭐ REAL-TIME SOCKET LISTENERS
+  // ---------------------------------------------------------------
+  useEffect(() => {
+    if (!token) return;
+
+    // New order created (by user or admin)
+    socket.on("order.created", () => {
+      fetchOrders();
+      fetchOutstanding();
+    });
+
+    // Status changed: pending -> preparing -> served
+    socket.on("order.updated", (payload) => {
+      fetchOrders();
+    });
+
+    // When admin marks paid → pending amount becomes 0 instantly
+    socket.on("order.paid", () => {
+      fetchOrders();
+      fetchOutstanding();
+      toast.success("Your bill has been paid!");
+    });
+
+    // When admin sees bill request OR user requests again
+    socket.on("order.payRequested", () => {
+      fetchOutstanding();
+      toast.info("Bill request sent!");
+    });
+
+    return () => {
+      socket.off("order.created");
+      socket.off("order.updated");
+      socket.off("order.paid");
+      socket.off("order.payRequested");
+    };
+  }, [token]);
+
+  // ---------------------------------------------------------------
+  // RENDER
+  // ---------------------------------------------------------------
   return (
     <div className="my-orders">
       <h2>My Orders</h2>
 
-      {/* Outstanding Bill Summary Button */}
+      {/* Outstanding Bill Summary */}
       {unpaidOrders.length > 0 && (
         <div className="bill-summary">
           <h3>
@@ -158,18 +199,16 @@ const MyOrders = () => {
       {/* Orders List */}
       <div className="container">
         {orders.map((order) => {
-          const items = Array.isArray(order.items) ? order.items : [];
-
+          const items = order.items || [];
           const itemsText =
             items.length === 0
               ? "No items"
               : items
-                .map(
-                  (item, idx) =>
-                    `${item?.name || item?.itemId || "Item"} x ${item?.quantity || 0
-                    }`
-                )
-                .join(", ");
+                  .map(
+                    (item) =>
+                      `${item?.name || "Item"} x ${item?.quantity || 0}`
+                  )
+                  .join(", ");
 
           const { label, color } = normalizeStatus(order.status);
           const amount = Number(order.amount || 0).toFixed(2);
@@ -188,10 +227,7 @@ const MyOrders = () => {
               <p className="count">Items: {items.length}</p>
 
               <p className="status">
-                <span
-                  className="status-dot"
-                  style={{ background: color }}
-                />
+                <span className="status-dot" style={{ background: color }} />
                 <b className="status-label">{label}</b>
               </p>
 
